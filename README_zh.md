@@ -29,33 +29,76 @@ ArXivCat 的目标比较收敛。
 - 它不保证对所有论文源码结构都能完美解析。
 - 右侧 chat 主要用于轻量阅读辅助，不是针对超长论文的完整检索系统。
 
-## 安装
+## 版本选择
 
-安装依赖：
+ArXivCat 提供两个版本：
+
+### 桌面版（Tkinter）
+
+传统桌面应用，适合 Windows 用户。
+
+**安装依赖：**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-如果要使用 chat，需要在环境变量里设置 `GEMINI_API_KEY`。
-
-## 从源码运行
-
-GUI：
+**运行：**
 
 ```bash
+# GUI
 python main.py
-```
 
-CLI：
-
-```bash
+# CLI
 python cli.py --url 2601.11514
 python cli.py --url https://arxiv.org/abs/2601.11514
-python cli.py --url https://arxiv.org/pdf/2601.11514
 ```
 
-## GUI 使用流程
+### Web 版（推荐）⭐
+
+基于浏览器的版本，支持 Windows、macOS、Linux、Android、iOS。
+
+**特性：**
+- 🌐 跨平台（包括手机）
+- 📱 可安装到主屏幕（PWA）
+- 🎨 响应式设计
+- 💬 集成 AI 助手
+
+**快速开始：**
+
+```bash
+# 安装依赖
+pip install -r requirements-web.txt
+
+# 启动服务器
+.\run-web.ps1
+```
+
+访问 http://localhost:5000
+
+**手机使用：**
+1. 手机和电脑连接同一 WiFi
+2. 手机浏览器访问 `http://你的电脑IP:5000`
+3. 点击"添加到主屏幕"
+4. 像原生 app 一样使用
+
+详见 [web/README.md](web/README.md)
+
+---
+
+## 配置
+
+如果要使用 chat，需要在环境变量里设置 `GEMINI_API_KEY`：
+
+```bash
+# Windows PowerShell
+$env:GEMINI_API_KEY="your-api-key"
+
+# Linux/macOS
+export GEMINI_API_KEY="your-api-key"
+```
+
+## GUI 使用流程（桌面版）
 
 1. 粘贴 arXiv 链接或 ID
 2. 点击 `Run`
@@ -69,7 +112,7 @@ python cli.py --url https://arxiv.org/pdf/2601.11514
 
 ## Chat 面板
 
-当前 chat 使用 `gemini-3.1-flash-lite-preview`。
+当前 chat 使用 `gemini-2.0-flash-lite`。
 
 目前的行为：
 

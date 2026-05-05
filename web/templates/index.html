@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ArxivCat - 从 arXiv 论文中提取可读文本">
+    <meta name="theme-color" content="#1e1e2e">
+    <title>ArxivCat</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+</head>
+<body>
+    <div class="container">
+        <!-- Main Content -->
+        <div class="main-panel">
+            <!-- Header -->
+            <header class="header">
+                <h1>📄 ArxivCat</h1>
+                <p class="subtitle">提取 arXiv 论文可读文本</p>
+            </header>
+
+            <!-- Input Section -->
+            <div class="input-section">
+                <input 
+                    type="text" 
+                    id="arxiv-input" 
+                    class="input-field" 
+                    placeholder="输入 arXiv ID 或 URL (例如: 2301.12345)"
+                    autocomplete="off"
+                >
+                <button id="extract-btn" class="btn btn-primary">
+                    <span id="btn-text">提取</span>
+                    <span id="btn-spinner" class="spinner hidden"></span>
+                </button>
+            </div>
+
+            <!-- Status Bar -->
+            <div id="status-bar" class="status-bar hidden">
+                <span id="status-text"></span>
+            </div>
+
+            <!-- View Controls -->
+            <div id="view-controls" class="view-controls hidden">
+                <div class="view-tabs">
+                    <button class="tab-btn active" data-view="body">正文</button>
+                    <button class="tab-btn" data-view="appendix">附录</button>
+                </div>
+                <div class="action-buttons">
+                    <button id="copy-btn" class="btn btn-small" title="复制到剪贴板">📋 复制</button>
+                    <button id="strip-btn" class="btn btn-small" title="去除注释">🧹 去注释</button>
+                    <button id="log-toggle" class="btn btn-small">📊 日志</button>
+                </div>
+            </div>
+
+            <!-- Log Panel (initially hidden, shown after extraction starts) -->
+            <div id="log-panel" class="log-panel hidden">
+                <div class="log-header">
+                    <span>处理日志</span>
+                    <button id="log-close" class="btn-close">✕</button>
+                </div>
+                <pre id="log-content" class="log-content"></pre>
+            </div>
+
+            <!-- Preview Area -->
+            <div id="preview-section" class="preview-section hidden">
+                <div class="preview-header">
+                    <span id="preview-title">body.tex</span>
+                    <span id="preview-stats" class="preview-stats"></span>
+                </div>
+                <textarea 
+                    id="preview-text" 
+                    class="preview-text" 
+                    spellcheck="false"
+                    placeholder="提取的内容将显示在这里..."
+                ></textarea>
+            </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="chat-panel" id="chat-panel">
+            <div class="chat-header">
+                <h3>💬 AI 助手</h3>
+                <button id="chat-reset" class="btn btn-small">重置</button>
+            </div>
+            
+            <div id="chat-messages" class="chat-messages">
+                <div class="chat-message assistant">
+                    <div class="message-content">
+                        你好！我可以帮你理解论文内容。提取论文后，你可以问我任何问题。
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-section">
+                <textarea 
+                    id="chat-input" 
+                    class="chat-input" 
+                    placeholder="问我关于论文的问题..."
+                    rows="2"
+                ></textarea>
+                <button id="chat-send" class="btn btn-primary">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/sw.js')
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>
