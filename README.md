@@ -12,12 +12,14 @@ The project is meant for a simple workflow: paste an arXiv URL or ID, inspect th
 ## Features
 
 - download source packages from an arXiv URL, PDF URL, or raw arXiv ID
-- extract and cache arXiv source locally
+- extract and cache arXiv source locally (unlimited cache, no size limit)
 - recursively expand nested LaTeX `\input` and `\include`
 - detect the main TeX file automatically
 - export:
   - `body.tex`
   - `appendix.tex` when available
+- **paper history sidebar**: left panel lists all previously downloaded papers, click to reload instantly
+- resizable three-column layout (paper list / preview / chat)
 - preview and lightly edit extracted text in a Tkinter GUI
 - use a lightweight DeepSeek chat panel on the right side with streaming output
 

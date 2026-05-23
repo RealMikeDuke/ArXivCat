@@ -12,12 +12,14 @@ ArXivCat 是一个处理 arXiv LaTeX 源码包的小型桌面工具。
 ## 功能
 
 - 支持从 arXiv 页面链接、PDF 链接或纯 arXiv ID 下载源码包
-- 自动解压并缓存 arXiv 源码
+- 自动解压并缓存 arXiv 源码（无限缓存，不限大小）
 - 递归展开 LaTeX `\input` 和 `\include`
 - 自动寻找主 TeX 文件
 - 导出：
   - `body.tex`
   - 如果存在则导出 `appendix.tex`
+- **论文历史列表**：左侧面板显示所有已下载论文，点击即可快速重新加载
+- 三栏可拖拽布局（论文列表 / 预览区 / chat）
 - 提供 Tkinter GUI，用于预览和轻量编辑提取结果
 - 右侧带一个轻量 DeepSeek chat 面板，支持流式输出
 

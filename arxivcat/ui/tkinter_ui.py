@@ -11,7 +11,7 @@ from typing import Callable
 
 from openai import OpenAI
 
-from arxivcat.presenter import Presenter, VERSION, AUTHOR, load_cached_token, save_token
+from arxivcat.presenter import Presenter, VERSION, AUTHOR, load_cached_token, save_token, save_model_preference, load_model_preference
 
 # ── palette (Catppuccin Mocha) ────────────────────────────────
 BG      = "#1e1e2e"
@@ -242,7 +242,10 @@ class _RunButton(tk.Label):
 class TkApp:
     """Tkinter implementation of UIProtocol."""
 
-    CHAT_MODEL = "deepseek-v4-flash"
+    CHAT_MODELS = {
+        "Flash": "deepseek-v4-flash",
+        "Pro": "deepseek-v4-pro"
+    }
 
     def __init__(self):
         self._toast_after = None
@@ -260,9 +263,13 @@ class TkApp:
             "prompt_tokens": None,
             "completion_tokens": None,
         }
+        self._chat_model = load_model_preference()  # Load from cache
         self._build()
-        self._check_and_prompt_token()
         self._presenter = Presenter(self)
+        self._check_and_prompt_token()
+        # Load paper list on startup
+        papers = self._presenter.get_paper_list()
+        self.set_paper_list(papers)
 
     # ── UIProtocol ────────────────────────────────────────────
 
@@ -326,6 +333,21 @@ class TkApp:
             self._log_text.config(state="disabled"),
         ))
 
+    def set_url_input(self, url: str) -> None:
+        self._root.after(0, lambda: (
+            self._url_var.set(url),
+            self._url_entry.config(fg=TEXT)
+        ))
+
+    def set_paper_list(self, papers: list[dict]) -> None:
+        def _do():
+            self._paper_list.delete(0, "end")
+            self._paper_data = papers
+            for paper in papers:
+                display_text = f"{paper['arxiv_id']}\n{paper['title']}"
+                self._paper_list.insert("end", display_text)
+        self._root.after(0, _do)
+
     def run(self) -> None:
         self._root.mainloop()
 
@@ -342,6 +364,47 @@ class TkApp:
         else:
             self._log_frame.pack(fill="x", side="top", after=self._ctrl_row, pady=(0, 4))
             self._log_visible = True
+
+    def _on_paper_click(self, event):
+        """Handle click on paper list item."""
+        selection = self._paper_list.curselection()
+        if selection:
+            index = selection[0]
+            if index < len(self._paper_data):
+                paper = self._paper_data[index]
+                self._presenter.load_paper(paper["folder_name"])
+
+    def _on_paper_hover(self, event):
+        """Show tooltip with full title on hover."""
+        index = self._paper_list.nearest(event.y)
+        if index < 0 or index >= len(self._paper_data):
+            self._on_paper_leave(None)
+            return
+        paper = self._paper_data[index]
+        tip_text = f"{paper['arxiv_id']}\n{paper['title']}"
+
+        if self._paper_tooltip and self._paper_tooltip.winfo_exists():
+            self._paper_tooltip_label.config(text=tip_text)
+        else:
+            tw = tk.Toplevel(self._root)
+            tw.wm_overrideredirect(True)
+            tw.configure(bg=MUTED)
+            lbl = tk.Label(tw, text=tip_text, bg=BTN, fg=TEXT,
+                           font=("Consolas", 9), justify="left",
+                           padx=8, pady=4, wraplength=360)
+            lbl.pack(padx=1, pady=1)
+            self._paper_tooltip = tw
+            self._paper_tooltip_label = lbl
+
+        x = self._paper_list.winfo_rootx() + self._paper_list.winfo_width() + 4
+        y = self._paper_list.winfo_rooty() + event.y
+        self._paper_tooltip.wm_geometry(f"+{x}+{y}")
+
+    def _on_paper_leave(self, event):
+        """Destroy tooltip when mouse leaves the list."""
+        if self._paper_tooltip and self._paper_tooltip.winfo_exists():
+            self._paper_tooltip.destroy()
+        self._paper_tooltip = None
 
     def _on_view_change(self, *_):
         self._presenter.switch_view()
@@ -467,7 +530,7 @@ class TkApp:
                 estimated_input_tokens = total_chars // 3
                 
                 response = client.chat.completions.create(
-                    model=self.CHAT_MODEL,
+                    model=self.CHAT_MODELS[self._chat_model],
                     messages=messages,
                     stream=True,
                     **extra_params
@@ -512,7 +575,7 @@ class TkApp:
                     self._set_chat_status("cancelled", MUTED)
                 else:
                     # Update status with model name only, metrics shown separately
-                    self._set_chat_status(self.CHAT_MODEL, SUCCESS)
+                    self._set_chat_status(self.CHAT_MODELS[self._chat_model], SUCCESS)
                     self._format_metrics()
             except Exception as exc:
                 if not self._chat_cancelled:
@@ -576,6 +639,17 @@ class TkApp:
         """Handle Update Token button click."""
         self._prompt_for_token()
 
+    def _on_model_change(self, value):
+        """Handle model selection change."""
+        self._chat_model = value
+        self._save_model_preference()
+        self._chat_model_label.config(text=self.CHAT_MODELS[value])
+        self._set_chat_status(f"Model: {self.CHAT_MODELS[value]}", SUCCESS)
+
+    def _save_model_preference(self):
+        """Save model preference to cache."""
+        save_model_preference(self._chat_model)
+
     # ── build ─────────────────────────────────────────────────
 
     def _build(self):
@@ -591,19 +665,49 @@ class TkApp:
         outer = tk.Frame(root, bg=BG)
         outer.pack(fill="both", expand=True, padx=24, pady=(18, 14))
 
-        split = tk.Frame(outer, bg=BG)
+        split = tk.PanedWindow(outer, orient="horizontal", bg=BG,
+                                sashwidth=8, sashrelief="flat",
+                                opaqueresize=True)
         split.pack(fill="both", expand=True)
 
+        paper_list_col = tk.Frame(split, bg=PANEL, padx=10, pady=12)
+
         main_col = tk.Frame(split, bg=BG)
-        main_col.pack(side="left", fill="both", expand=True)
         self._main_col = main_col
 
-        gutter = tk.Frame(split, bg=BG, width=14)
-        gutter.pack(side="left", fill="y")
+        chat_col = tk.Frame(split, bg=PANEL, padx=12, pady=12)
 
-        chat_col = tk.Frame(split, bg=PANEL, width=320, padx=12, pady=12)
-        chat_col.pack(side="right", fill="y")
-        chat_col.pack_propagate(False)
+        split.add(paper_list_col, minsize=160, width=240)
+        split.add(main_col, minsize=300, stretch="always")
+        split.add(chat_col, minsize=240, width=320)
+
+        # Paper list panel content
+        tk.Label(paper_list_col, text="Papers", bg=PANEL, fg=ACCENT,
+                 font=("Consolas", 13, "bold")).pack(anchor="w", pady=(0, 10))
+
+        paper_list_scroll = tk.Scrollbar(paper_list_col, bg=PANEL,
+                                         troughcolor=PANEL, activebackground=BTN_HOV)
+        paper_list_scroll.pack(side="right", fill="y")
+
+        self._paper_list = tk.Listbox(
+            paper_list_col,
+            bg=PANEL,
+            fg=TEXT,
+            selectbackground=ACCENT,
+            selectforeground=BG,
+            font=("Consolas", 9),
+            relief="flat",
+            yscrollcommand=paper_list_scroll.set,
+            bd=0,
+            highlightthickness=0,
+        )
+        self._paper_list.pack(fill="both", expand=True)
+        paper_list_scroll.config(command=self._paper_list.yview)
+        self._paper_list.bind("<Button-1>", self._on_paper_click)
+        self._paper_list.bind("<Motion>", self._on_paper_hover)
+        self._paper_list.bind("<Leave>", self._on_paper_leave)
+        self._paper_data = []  # Store paper metadata
+        self._paper_tooltip = None
 
         title_row = tk.Frame(main_col, bg=BG)
         title_row.pack(fill="x")
@@ -631,6 +735,7 @@ class TkApp:
         )
         url_entry.grid(row=0, column=0, sticky="ew", ipady=8, padx=(0, 8))
         url_entry.insert(0, self._placeholder)
+        self._url_entry = url_entry
 
         def _focus_in(e):
             if url_entry.get() == self._placeholder:
@@ -781,12 +886,18 @@ class TkApp:
 
         tk.Label(chat_col, text="chat", bg=PANEL, fg=ACCENT,
                  font=("Consolas", 13, "bold")).pack(anchor="w")
-        tk.Label(chat_col, text=self.CHAT_MODEL, bg=PANEL, fg=MUTED,
-                 font=("Consolas", 8)).pack(anchor="w", pady=(2, 6))
+        self._chat_model_label = tk.Label(chat_col, text=self.CHAT_MODELS[self._chat_model], bg=PANEL, fg=MUTED,
+                 font=("Consolas", 8))
+        self._chat_model_label.pack(anchor="w", pady=(2, 6))
         
         self._deep_thinking_enabled = tk.BooleanVar(value=self._deep_thinking)
+        
+        # Container for horizontal layout
+        controls_row = tk.Frame(chat_col, bg=PANEL)
+        controls_row.pack(fill="x", pady=(0, 10))
+        
         tk.Checkbutton(
-            chat_col,
+            controls_row,
             text="Deep Thinking",
             variable=self._deep_thinking_enabled,
             bg=PANEL,
@@ -795,21 +906,33 @@ class TkApp:
             activeforeground=TEXT,
             selectcolor=BG,
             font=("Consolas", 9),
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(side="left", padx=(0, 10))
+        
+        # Model selector
+        self._chat_model_var = tk.StringVar(value=self._chat_model)
+        model_dropdown = tk.OptionMenu(
+            controls_row,
+            self._chat_model_var,
+            *self.CHAT_MODELS.keys(),
+            command=self._on_model_change
+        )
+        model_dropdown.config(bg=PANEL, fg=TEXT, font=("Consolas", 9), activebackground=ACCENT, activeforeground=BG, relief="solid", bd=1, highlightthickness=0)
+        model_dropdown["menu"].config(bg=BG, fg=TEXT, font=("Consolas", 9), activebackground=ACCENT, activeforeground=BG)
+        model_dropdown.pack(side="left", padx=(0, 10))
         
         tk.Button(
-            chat_col,
+            controls_row,
             text="Update Token",
             command=self._on_update_token,
             bg=BTN,
-            fg=MUTED,
+            fg=TEXT,
             activebackground=BTN_HOV,
             activeforeground=TEXT,
             font=("Consolas", 9),
             relief="flat",
             padx=10,
             pady=2,
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(side="left")
 
         chat_bottom = tk.Frame(chat_col, bg=PANEL)
         chat_bottom.pack(fill="x", side="bottom")

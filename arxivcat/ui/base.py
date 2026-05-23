@@ -49,6 +49,14 @@ class UIProtocol(Protocol):
         """Clear all log entries."""
         ...
 
+    def set_url_input(self, url: str) -> None:
+        """Set the value of the URL / ID input field."""
+        ...
+
+    def set_paper_list(self, papers: list[dict]) -> None:
+        """Update the paper list in the left panel."""
+        ...
+
     def run(self) -> None:
         """Start the UI event loop (blocking)."""
         ...
