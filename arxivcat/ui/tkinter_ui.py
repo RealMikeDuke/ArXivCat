@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
-from google import genai
+from openai import OpenAI
 
 from arxivcat.presenter import Presenter, VERSION, AUTHOR
 
@@ -116,7 +116,7 @@ class _RunButton(tk.Label):
 class TkApp:
     """Tkinter implementation of UIProtocol."""
 
-    CHAT_MODEL = "gemini-3.1-flash-lite-preview"
+    CHAT_MODEL = "deepseek-v4-flash"
 
     def __init__(self):
         self._toast_after = None
@@ -125,6 +125,15 @@ class TkApp:
         self._chat_after = None
         self._chat_history: list[tuple[str, str]] = []
         self._chat_placeholder = "Ask something about the current paper…"
+        self._chat_output_buffer = ""
+        self._deep_thinking = True  # Python bool for storage
+        self._chat_cancelled = False
+        self._chat_metrics = {
+            "ttft": None,  # time to first token
+            "tokens_per_sec": None,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+        }
         self._build()
         self._presenter = Presenter(self)
 
@@ -226,16 +235,23 @@ class TkApp:
             self._chat_busy = busy
             self._chat_send_btn.set_enabled(not busy)
             self._chat_reset_btn.set_enabled(not busy)
+            self._chat_stop_btn.set_enabled(busy)
             self._chat_input.config(state="disabled" if busy else "normal")
         self._root.after(0, _do)
 
-    def _append_chat_message(self, speaker: str, content: str, color: str):
+    def _append_chat_message(self, speaker: str, content: str, color: str, append: bool = False):
         def _do():
             self._chat_output.tag_config(f"{speaker}_tag", foreground=color, font=("Consolas", 10, "bold"))
             self._chat_output.tag_config(f"{speaker}_body", foreground=TEXT)
             self._chat_output.config(state="normal")
-            self._chat_output.insert("end", f"{speaker}\n", (f"{speaker}_tag",))
-            self._chat_output.insert("end", content.strip() + "\n\n", (f"{speaker}_body",))
+            if not append:
+                self._chat_output.insert("end", f"{speaker}: ", (f"{speaker}_tag",))
+                if content:
+                    self._chat_output.insert("end", content + "\n\n", (f"{speaker}_body",))
+                else:
+                    self._chat_output.insert("end", "\n\n", (f"{speaker}_body",))
+            else:
+                self._chat_output.insert("end", content, (f"{speaker}_body",))
             self._chat_output.see("end")
             self._chat_output.config(state="disabled")
         self._root.after(0, _do)
@@ -260,10 +276,10 @@ class TkApp:
 
     def _ensure_chat_client(self):
         if self._chat_client is None:
-            api_key = os.getenv("GEMINI_API_KEY")
+            api_key = os.getenv("DEEPSEEK_API_KEY")
             if not api_key:
-                raise ValueError("Missing GEMINI_API_KEY")
-            self._chat_client = genai.Client(api_key=api_key)
+                raise ValueError("Missing DEEPSEEK_API_KEY")
+            self._chat_client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         return self._chat_client
 
     def _on_chat_send(self):
@@ -287,29 +303,96 @@ class TkApp:
             try:
                 client = self._ensure_chat_client()
                 context = preview_text[:12000] if preview_text else "(no preview loaded)"
-                history = "\n\n".join(
-                    f"{speaker}: {message}" for speaker, message in self._chat_history[-12:]
-                )
-                full_prompt = (
-                    "You are a compact in-app chat assistant inside an arXiv paper extraction tool. "
-                    "Maintain conversation continuity using the chat history below. If the user asks a general question, answer it normally. "
-                    "If useful, you may also use the current paper preview as extra context.\n\n"
-                    f"Current view: {view_name}\n\n"
-                    f"Paper content snippet:\n{context}\n\n"
-                    f"Chat history:\n{history}"
-                )
-                response = client.models.generate_content(
+                
+                # Build messages in standard format for cache hit
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "You are a compact in-app chat assistant inside an arXiv paper extraction tool. Maintain conversation continuity. If the user asks a general question, answer it normally. If useful, use the paper preview as extra context."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Current view: {view_name}\n\nPaper content snippet:\n{context}"
+                    }
+                ]
+                
+                # Add conversation history
+                for speaker, message in self._chat_history[-12:]:
+                    role = "user" if speaker == "you" else "assistant"
+                    messages.append({"role": role, "content": message})
+                
+                # Prepare extra parameters for deep thinking
+                extra_params = {}
+                if self._deep_thinking_enabled.get():
+                    extra_params["extra_body"] = {"thinking": {"type": "enabled"}}
+                    extra_params["reasoning_effort"] = "high"
+                
+                # Stream the response
+                import time
+                self._chat_output_buffer = ""
+                first_chunk = True
+                start_time = time.time()
+                first_token_time = None
+                token_count = 0
+                
+                # Estimate input tokens (rough approximation)
+                total_chars = sum(len(m["content"]) for m in messages)
+                estimated_input_tokens = total_chars // 3
+                
+                response = client.chat.completions.create(
                     model=self.CHAT_MODEL,
-                    contents=full_prompt,
+                    messages=messages,
+                    stream=True,
+                    **extra_params
                 )
-                text = (response.text or "").strip() or "(empty response)"
-                self._chat_history.append(("gemini", text))
-                self._append_chat_message("gemini", text, SUCCESS)
-                self._set_chat_status(self.CHAT_MODEL, SUCCESS)
+                
+                for chunk in response:
+                    if self._chat_cancelled:
+                        break
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        self._chat_output_buffer += content
+                        token_count += 1
+                        
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                            self._chat_metrics["ttft"] = (first_token_time - start_time) * 1000  # ms
+                        
+                        if first_chunk:
+                            self._append_chat_message("deepseek", content, SUCCESS, append=False)
+                            first_chunk = False
+                        else:
+                            self._append_chat_message("deepseek", content, SUCCESS, append=True)
+                
+                end_time = time.time()
+                
+                # Calculate tokens per second
+                if token_count > 0 and end_time > start_time:
+                    self._chat_metrics["tokens_per_sec"] = token_count / (end_time - start_time)
+                
+                # Set estimated token counts
+                self._chat_metrics["prompt_tokens"] = estimated_input_tokens
+                self._chat_metrics["completion_tokens"] = token_count
+                
+                # Add final newlines if not cancelled and got content
+                if not self._chat_cancelled and self._chat_output_buffer.strip():
+                    self._append_chat_message("deepseek", "\n\n", SUCCESS, append=True)
+                
+                if self._chat_output_buffer.strip():
+                    self._chat_history.append(("deepseek", self._chat_output_buffer.strip()))
+                
+                if self._chat_cancelled:
+                    self._set_chat_status("cancelled", MUTED)
+                else:
+                    # Update status with model name only, metrics shown separately
+                    self._set_chat_status(self.CHAT_MODEL, SUCCESS)
+                    self._format_metrics()
             except Exception as exc:
-                self._append_chat_message("system", str(exc), ERROR)
-                self._set_chat_status("chat error", ERROR)
+                if not self._chat_cancelled:
+                    self._append_chat_message("system", str(exc), ERROR)
+                    self._set_chat_status("chat error", ERROR)
             finally:
+                self._chat_cancelled = False
                 self._set_chat_busy(False)
                 self._root.after(0, self._clear_chat_input)
 
@@ -324,6 +407,26 @@ class TkApp:
         self._chat_output.config(state="disabled")
         self._clear_chat_input()
         self._set_chat_status("reset", MUTED)
+
+    def _on_chat_stop(self):
+        if getattr(self, "_chat_busy", False):
+            self._chat_cancelled = True
+            self._set_chat_status("stopping...", MUTED)
+
+    def _format_metrics(self) -> str:
+        parts = []
+        if self._chat_metrics["ttft"]:
+            parts.append(f"TTFT: {self._chat_metrics['ttft']:.0f}ms")
+        if self._chat_metrics["tokens_per_sec"]:
+            parts.append(f"{self._chat_metrics['tokens_per_sec']:.1f} tok/s")
+        if self._chat_metrics["prompt_tokens"]:
+            parts.append(f"in: {self._chat_metrics['prompt_tokens']}")
+        if self._chat_metrics["completion_tokens"]:
+            parts.append(f"out: {self._chat_metrics['completion_tokens']}")
+        
+        metrics_str = " | ".join(parts) if parts else ""
+        self._chat_metrics_var.set(metrics_str)
+        return metrics_str
 
     # ── build ─────────────────────────────────────────────────
 
@@ -531,7 +634,20 @@ class TkApp:
         tk.Label(chat_col, text="chat", bg=PANEL, fg=ACCENT,
                  font=("Consolas", 13, "bold")).pack(anchor="w")
         tk.Label(chat_col, text=self.CHAT_MODEL, bg=PANEL, fg=MUTED,
-                 font=("Consolas", 8)).pack(anchor="w", pady=(2, 10))
+                 font=("Consolas", 8)).pack(anchor="w", pady=(2, 6))
+        
+        self._deep_thinking_enabled = tk.BooleanVar(value=self._deep_thinking)
+        tk.Checkbutton(
+            chat_col,
+            text="Deep Thinking",
+            variable=self._deep_thinking_enabled,
+            bg=PANEL,
+            fg=MUTED,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+            selectcolor=BG,
+            font=("Consolas", 9),
+        ).pack(anchor="w", pady=(0, 10))
 
         chat_bottom = tk.Frame(chat_col, bg=PANEL)
         chat_bottom.pack(fill="x", side="bottom")
@@ -544,7 +660,17 @@ class TkApp:
             fg=MUTED,
             font=("Consolas", 8),
         )
-        self._chat_status_lbl.pack(anchor="w", pady=(0, 6))
+        self._chat_status_lbl.pack(anchor="w", pady=(0, 2))
+        
+        self._chat_metrics_var = tk.StringVar(value="")
+        self._chat_metrics_lbl = tk.Label(
+            chat_bottom,
+            textvariable=self._chat_metrics_var,
+            bg=PANEL,
+            fg=ACCENT,
+            font=("Consolas", 8),
+        )
+        self._chat_metrics_lbl.pack(anchor="w", pady=(0, 4))
 
         self._chat_input = tk.Text(
             chat_bottom,
@@ -568,10 +694,13 @@ class TkApp:
         chat_btn_row.pack(fill="x", pady=(8, 0))
 
         self._chat_send_btn = _FlatButton(chat_btn_row, "Send", self._on_chat_send)
+        self._chat_stop_btn = _FlatButton(chat_btn_row, "Stop", self._on_chat_stop)
         self._chat_reset_btn = _FlatButton(chat_btn_row, "Reset", self._on_chat_reset)
         self._chat_send_btn.pack(side="left", padx=(0, 6))
+        self._chat_stop_btn.pack(side="left", padx=(0, 6))
         self._chat_reset_btn.pack(side="left")
         self._chat_send_btn.set_enabled(True)
+        self._chat_stop_btn.set_enabled(False)
         self._chat_reset_btn.set_enabled(True)
 
         tk.Frame(chat_col, bg=PANEL, height=8).pack(fill="x", side="bottom")
@@ -590,7 +719,7 @@ class TkApp:
             insertbackground=ACCENT,
             font=("Consolas", 9),
             relief="flat",
-            wrap="word",
+            wrap="char",
             state="disabled",
             yscrollcommand=chat_scroll.set,
             padx=8,

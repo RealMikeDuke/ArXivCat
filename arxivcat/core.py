@@ -78,9 +78,12 @@ def _all_inputs_readable(main_tex: Path, paper_dir: Path) -> bool:
     refs = re.findall(r'\\(?:input|include)\s*\{([^}]+)\}', content)
     for ref in refs:
         name = ref.strip()
-        if not name.endswith('.tex'):
-            name += '.tex'
+        # Try original name first, then add .tex if it doesn't exist
         p = (paper_dir / name).resolve()
+        if not p.exists() or not p.is_file():
+            if not name.endswith('.tex'):
+                name_with_tex = name + '.tex'
+                p = (paper_dir / name_with_tex).resolve()
         if not p.exists() or not p.is_file():
             return False
         try:
@@ -245,13 +248,17 @@ def expand_inputs(tex_content, base_dir, _seen=None, root_dir=None):
 
     def replace_input(match):
         filename = match.group(1).strip()
-        if not filename.endswith('.tex'):
-            filename += '.tex'
-
+        # Try original name first, then add .tex if it doesn't exist
         candidates = [
             (base_dir / filename).resolve(),
             (root_dir / filename).resolve(),
         ]
+        if not filename.endswith('.tex'):
+            filename_with_tex = filename + '.tex'
+            candidates.extend([
+                (base_dir / filename_with_tex).resolve(),
+                (root_dir / filename_with_tex).resolve(),
+            ])
 
         filepath = None
         for candidate in candidates:

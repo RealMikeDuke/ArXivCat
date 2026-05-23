@@ -5,7 +5,7 @@
 ArXivCat is a small desktop tool for working with arXiv LaTeX source packages.
 It downloads the source, expands LaTeX `\input` / `\include`, and exports cleaner paper text into `body.tex` and `appendix.tex`.
 
-The project is meant for a simple workflow: paste an arXiv URL or ID, inspect the extracted text, make small edits, and optionally use the built-in Gemini chat panel to ask quick questions about the current paper content.
+The project is meant for a simple workflow: paste an arXiv URL or ID, inspect the extracted text, make small edits, and optionally use the built-in DeepSeek chat panel to ask quick questions about the current paper content.
 
 ![ArXivCat screenshot](assets/screenshot.png)
 
@@ -19,7 +19,7 @@ The project is meant for a simple workflow: paste an arXiv URL or ID, inspect th
   - `body.tex`
   - `appendix.tex` when available
 - preview and lightly edit extracted text in a Tkinter GUI
-- use a lightweight Gemini chat panel on the right side
+- use a lightweight DeepSeek chat panel on the right side with streaming output
 
 ## Scope
 
@@ -37,7 +37,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-To use the chat panel, set `GEMINI_API_KEY` in your environment.
+To use the chat panel, set `DEEPSEEK_API_KEY` in your environment.
 
 ## Run from source
 
@@ -69,14 +69,17 @@ python cli.py --url https://arxiv.org/pdf/2601.11514
 
 ## Chat panel
 
-The current chat panel uses `gemini-3.1-flash-lite-preview`.
+The current chat panel uses `deepseek-v4-flash` with streaming output.
 
-Current behavior:
-
-- sends the current preview text as context
-- keeps short in-memory multi-turn history
-- clears chat memory when you click `Reset`
-- works best after a paper has already been loaded into the preview
+Features:
+- Streaming responses for real-time feedback
+- Deep thinking mode toggle (optional)
+- Stop button to cancel long responses
+- Performance metrics display (TTFT, tokens/sec, token usage)
+- Sends the current preview text as context
+- Keeps short in-memory multi-turn history
+- Clears chat memory when you click `Reset`
+- Works best after a paper has already been loaded into the preview
 
 ## Output locations
 

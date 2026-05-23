@@ -5,7 +5,7 @@
 ArXivCat 是一个处理 arXiv LaTeX 源码包的小型桌面工具。
 它会下载源码、展开 LaTeX 里的 `\input` / `\include`，并导出相对干净的 `body.tex` 和 `appendix.tex`。
 
-这个项目面向一个很直接的工作流：粘贴 arXiv 链接或 ID，查看提取后的文本，做一点轻量编辑，并在需要时使用右侧内置的 Gemini chat，对当前论文内容做快速问答。
+这个项目面向一个很直接的工作流：粘贴 arXiv 链接或 ID，查看提取后的文本，做一点轻量编辑，并在需要时使用右侧内置的 DeepSeek chat，对当前论文内容做快速问答。
 
 ![ArXivCat 截图](assets/screenshot.png)
 
@@ -19,7 +19,7 @@ ArXivCat 是一个处理 arXiv LaTeX 源码包的小型桌面工具。
   - `body.tex`
   - 如果存在则导出 `appendix.tex`
 - 提供 Tkinter GUI，用于预览和轻量编辑提取结果
-- 右侧带一个轻量 Gemini chat 面板
+- 右侧带一个轻量 DeepSeek chat 面板，支持流式输出
 
 ## 项目边界
 
@@ -88,14 +88,14 @@ pip install -r requirements-web.txt
 
 ## 配置
 
-如果要使用 chat，需要在环境变量里设置 `GEMINI_API_KEY`：
+如果要使用 chat，需要在环境变量里设置 `DEEPSEEK_API_KEY`：
 
 ```bash
 # Windows PowerShell
-$env:GEMINI_API_KEY="your-api-key"
+$env:DEEPSEEK_API_KEY="your-api-key"
 
 # Linux/macOS
-export GEMINI_API_KEY="your-api-key"
+export DEEPSEEK_API_KEY="your-api-key"
 ```
 
 ## GUI 使用流程（桌面版）
@@ -112,10 +112,13 @@ export GEMINI_API_KEY="your-api-key"
 
 ## Chat 面板
 
-当前 chat 使用 `gemini-2.0-flash-lite`。
+当前 chat 使用 `deepseek-v4-flash`，支持流式输出。
 
-目前的行为：
-
+功能特性：
+- 流式输出实时反馈
+- 深度思考模式开关（可选）
+- 中止按钮可取消长响应
+- 性能指标显示（TTFT、tokens/sec、token 使用量）
 - 会把当前预览区文本作为上下文发送
 - 会保留一个短期的多轮内存历史
 - 点击 `Reset` 会清空 chat 记忆
