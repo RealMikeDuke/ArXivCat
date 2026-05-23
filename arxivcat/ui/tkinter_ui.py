@@ -11,7 +11,7 @@ from typing import Callable
 
 from openai import OpenAI
 
-from arxivcat.presenter import Presenter, VERSION, AUTHOR
+from arxivcat.presenter import Presenter, VERSION, AUTHOR, load_cached_token, save_token
 
 # ── palette (Catppuccin Mocha) ────────────────────────────────
 BG      = "#1e1e2e"
@@ -27,23 +27,149 @@ RUN_HOV = "#74c7ec"
 
 
 def _enable_windows_dpi(root: tk.Tk) -> None:
-    if sys.platform != "win32":
-        return
+        if sys.platform != "win32":
+            return
 
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
         try:
-            ctypes.windll.user32.SetProcessDPIAware()
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+        try:
+            dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
+            if dpi > 0:
+                root.tk.call("tk", "scaling", dpi / 72.0)
         except Exception:
             pass
 
+
+def _show_token_input_dialog(parent: tk.Tk) -> str | None:
+    """Show a popup dialog to input DeepSeek API token."""
+    dialog = tk.Toplevel(parent)
+    dialog.title("DeepSeek API Token")
+    dialog.geometry("600x450")
+    dialog.configure(bg=BG)
+    dialog.transient(parent)
+    dialog.grab_set()
+    
+    # Center the dialog
+    dialog.update_idletasks()
+    x = parent.winfo_x() + (parent.winfo_width() - dialog.winfo_width()) // 2
+    y = parent.winfo_y() + (parent.winfo_height() - dialog.winfo_height()) // 2
+    dialog.geometry(f"+{x}+{y}")
+    
+    tk.Label(dialog, text="Enter DeepSeek API Token:", bg=BG, fg=TEXT,
+             font=("Consolas", 10)).pack(pady=(15, 10))
+    
+    token_var = tk.StringVar()
+    entry = tk.Entry(dialog, textvariable=token_var, bg=PANEL, fg=TEXT,
+                     font=("Consolas", 9), width=50, show="*")
+    entry.pack(pady=5, padx=20)
+    entry.focus()
+    
+    status_var = tk.StringVar(value="")
+    status_label = tk.Label(dialog, textvariable=status_var, bg=BG, fg=MUTED,
+                           font=("Consolas", 8))
+    status_label.pack(pady=5)
+    
+    # Log section
+    log_frame = tk.Frame(dialog, bg=BG)
+    log_frame.pack(fill="both", expand=True, padx=20, pady=10)
+    
+    log_text = tk.Text(log_frame, bg=BTN, fg=TEXT, font=("Consolas", 8),
+                      height=8, state="disabled", relief="flat")
+    log_text.pack(fill="both", expand=True)
+    
+    def add_log(msg: str, color: str = TEXT):
+        log_text.config(state="normal")
+        log_text.insert("end", msg + "\n", (color,))
+        log_text.see("end")
+        log_text.config(state="disabled")
+    
+    log_text.tag_config("SUCCESS", foreground=SUCCESS)
+    log_text.tag_config("ERROR", foreground=ERROR)
+    log_text.tag_config("INFO", foreground=ACCENT)
+    
+    result = [None]
+    
+    def on_validate():
+        token = token_var.get().strip()
+        if not token:
+            status_var.set("Token cannot be empty")
+            add_log("[ERROR] Token cannot be empty", "ERROR")
+            return
+        
+        add_log(f"[INFO] Validating token...", "INFO")
+        status_var.set("Validating...")
+        dialog.update()
+        
+        success, msg = _validate_token_with_details(token)
+        if success:
+            add_log(f"[OK] {msg}", "SUCCESS")
+            status_var.set("Token valid!")
+            result[0] = token
+        else:
+            add_log(f"[ERROR] {msg}", "ERROR")
+            status_var.set("Invalid token")
+    
+    def on_ok():
+        if result[0] is None:
+            status_var.set("Please validate token first")
+            add_log("[ERROR] Please validate token first", "ERROR")
+            return
+        dialog.destroy()
+    
+    def on_cancel():
+        dialog.destroy()
+    
+    btn_frame = tk.Frame(dialog, bg=BG)
+    btn_frame.pack(pady=15)
+    
+    tk.Button(btn_frame, text="Validate", command=on_validate, bg=ACCENT, fg=BG,
+              font=("Consolas", 9), padx=20).pack(side="left", padx=5)
+    tk.Button(btn_frame, text="OK", command=on_ok, bg=SUCCESS, fg=BG,
+              font=("Consolas", 9), padx=20).pack(side="left", padx=5)
+    tk.Button(btn_frame, text="Cancel", command=on_cancel, bg=BTN, fg=MUTED,
+              font=("Consolas", 9), padx=20).pack(side="left", padx=5)
+    
+    entry.bind("<Return>", lambda e: on_validate())
+    dialog.wait_window()
+    
+    return result[0]
+
+
+def _validate_token(token: str) -> bool:
+    """Validate DeepSeek API token by sending a test message."""
+    success, _ = _validate_token_with_details(token)
+    return success
+
+
+def _validate_token_with_details(token: str) -> tuple[bool, str]:
+    """Validate DeepSeek API token with detailed error messages."""
     try:
-        dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
-        if dpi > 0:
-            root.tk.call("tk", "scaling", dpi / 72.0)
-    except Exception:
-        pass
+        import time
+        start_time = time.time()
+        client = OpenAI(api_key=token, base_url="https://api.deepseek.com")
+        response = client.chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=[{"role": "user", "content": "你好！"}],
+            max_tokens=10,
+        )
+        elapsed = (time.time() - start_time) * 1000
+        return True, f"Token validated successfully (response time: {elapsed:.0f}ms)"
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            return False, "Authentication failed: Invalid token"
+        elif "429" in error_msg:
+            return False, "Rate limit exceeded. Please try again later"
+        elif "timeout" in error_msg.lower():
+            return False, "Request timed out. Check your network connection"
+        else:
+            return False, f"Validation failed: {error_msg}"
 
 
 class _FlatButton(tk.Label):
@@ -135,6 +261,7 @@ class TkApp:
             "completion_tokens": None,
         }
         self._build()
+        self._check_and_prompt_token()
         self._presenter = Presenter(self)
 
     # ── UIProtocol ────────────────────────────────────────────
@@ -276,9 +403,9 @@ class TkApp:
 
     def _ensure_chat_client(self):
         if self._chat_client is None:
-            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_key = load_cached_token()
             if not api_key:
-                raise ValueError("Missing DEEPSEEK_API_KEY")
+                raise ValueError("Missing DeepSeek API token. Please restart the app and enter your token.")
             self._chat_client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         return self._chat_client
 
@@ -427,6 +554,27 @@ class TkApp:
         metrics_str = " | ".join(parts) if parts else ""
         self._chat_metrics_var.set(metrics_str)
         return metrics_str
+
+    def _check_and_prompt_token(self):
+        """Check for cached token and prompt if missing."""
+        token = load_cached_token()
+        if not token:
+            self._root.after(100, self._prompt_for_token)
+        else:
+            # Validate cached token
+            if not _validate_token(token):
+                self._root.after(100, self._prompt_for_token)
+
+    def _prompt_for_token(self):
+        """Show token input dialog and validate."""
+        token = _show_token_input_dialog(self._root)
+        if token:
+            save_token(token)
+            self.add_log("[OK] Token saved to cache")
+
+    def _on_update_token(self):
+        """Handle Update Token button click."""
+        self._prompt_for_token()
 
     # ── build ─────────────────────────────────────────────────
 
@@ -647,6 +795,20 @@ class TkApp:
             activeforeground=TEXT,
             selectcolor=BG,
             font=("Consolas", 9),
+        ).pack(anchor="w", pady=(0, 6))
+        
+        tk.Button(
+            chat_col,
+            text="Update Token",
+            command=self._on_update_token,
+            bg=BTN,
+            fg=MUTED,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=("Consolas", 9),
+            relief="flat",
+            padx=10,
+            pady=2,
         ).pack(anchor="w", pady=(0, 10))
 
         chat_bottom = tk.Frame(chat_col, bg=PANEL)

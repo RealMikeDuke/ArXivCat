@@ -1,6 +1,7 @@
 """Presenter: all business logic. Zero dependency on any UI framework."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -18,8 +19,40 @@ from arxivcat.core import (
     extract_body_from_dir,
 )
 
-VERSION = "v0.4.1"
+VERSION = "v0.4.2"
 AUTHOR = "by MikeDuke"
+
+
+def get_cache_dir() -> Path:
+    """Get the cache directory for ArxivCat."""
+    return Path(os.environ.get("APPDATA", Path.home())) / "ArxivCat"
+
+
+def get_token_path() -> Path:
+    """Get the path to the token cache file."""
+    return get_cache_dir() / "config.json"
+
+
+def load_cached_token() -> str | None:
+    """Load DeepSeek API token from cache."""
+    token_path = get_token_path()
+    if token_path.exists():
+        try:
+            with open(token_path, "r") as f:
+                config = json.load(f)
+                return config.get("deepseek_api_key")
+        except Exception:
+            return None
+    return None
+
+
+def save_token(token: str) -> None:
+    """Save DeepSeek API token to cache."""
+    token_path = get_token_path()
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    config = {"deepseek_api_key": token}
+    with open(token_path, "w") as f:
+        json.dump(config, f)
 
 
 class Presenter:
@@ -32,7 +65,7 @@ class Presenter:
 
     def _init_cache(self):
         """Clean downloads cache if > 50 MB on startup."""
-        base = Path(os.environ.get("APPDATA", Path.home())) / "ArxivCat"
+        base = get_cache_dir()
         downloads = base / "downloads"
         if downloads.exists():
             size = sum(f.stat().st_size for f in downloads.rglob("*") if f.is_file())
