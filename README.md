@@ -11,17 +11,20 @@ The project is meant for a simple workflow: paste an arXiv URL or ID, inspect th
 
 ## Features
 
-- download source packages from an arXiv URL, PDF URL, or raw arXiv ID
-- extract and cache arXiv source locally (unlimited cache, no size limit)
-- recursively expand nested LaTeX `\input` and `\include`
-- detect the main TeX file automatically
-- export:
-  - `body.tex`
-  - `appendix.tex` when available
-- **paper history sidebar**: left panel lists all previously downloaded papers, click to reload instantly
-- resizable three-column layout (paper list / preview / chat)
-- preview and lightly edit extracted text in a Tkinter GUI
-- use a lightweight DeepSeek chat panel on the right side with streaming output
+- **Workspace mode**: open any folder as a workspace (like Obsidian); each subfolder is a paper
+- Remembers last workspace on launch; "Open Folder" to switch anytime
+- **Scan PDFs**: auto-detect arXiv IDs (with version, e.g. `2604.12630v1`) from PDFs in the workspace
+- **Download All**: one-click batch download with progress (`3/10`), resumable
+- Automatically downloads the PDF alongside LaTeX source
+- **Open PDF**: view the arXiv PDF in your browser
+- Download source packages from an arXiv URL, PDF URL, or raw arXiv ID
+- Extract and cache arXiv source locally (unlimited cache)
+- Recursively expand nested LaTeX `\input` and `\include`
+- Detect the main TeX file automatically
+- Export `body.tex` and `appendix.tex`
+- Resizable three-column layout (paper list / preview / chat)
+- Preview and lightly edit extracted text in a Tkinter GUI
+- Lightweight DeepSeek chat panel with streaming output
 
 ## Scope
 
@@ -59,15 +62,12 @@ python cli.py --url https://arxiv.org/pdf/2601.11514
 
 ## GUI workflow
 
-1. Paste an arXiv URL or ID.
-2. Click `Run`.
-3. Review the extracted `body` or `appendix` view.
-4. Optionally use:
-   - `Copy`
-   - `Overwrite`
-   - `Open Folder`
-   - `Strip Comments`
-5. Use the right-side chat panel for quick summaries or explanations.
+1. On first launch, select a workspace folder.
+2. Paste an arXiv URL or ID → click `Run` → paper is downloaded and extracted into the workspace.
+3. Or: drop PDFs into the workspace folder → click `Scan PDFs` → then `Download All`.
+4. Click any paper in the left panel to load it.
+5. Use action buttons: `Copy`, `Overwrite`, `Open Folder`, `Open PDF`, `Strip Comments`.
+6. Use the right-side chat panel for quick summaries or explanations.
 
 ## Chat panel
 
@@ -85,8 +85,9 @@ Features:
 
 ## Output locations
 
-- cache: `%APPDATA%/ArxivCat/downloads/`
-- extracted output: `%APPDATA%/ArxivCat/outputs/`
+- workspace: user-selected folder (each paper is a subfolder containing `body.tex`, `appendix.tex`, and the PDF)
+- download cache: `%APPDATA%/ArxivCat/downloads/`
+- config: `%APPDATA%/ArxivCat/config.json`
 
 If a cache directory becomes unreadable, ArXivCat may re-download the source or write to a `*_freshN` directory.
 

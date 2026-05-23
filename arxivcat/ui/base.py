@@ -57,6 +57,10 @@ class UIProtocol(Protocol):
         """Update the paper list in the left panel."""
         ...
 
+    def set_title(self, title: str) -> None:
+        """Set the window title."""
+        ...
+
     def run(self) -> None:
         """Start the UI event loop (blocking)."""
         ...

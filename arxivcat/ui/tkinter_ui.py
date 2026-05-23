@@ -11,7 +11,7 @@ from typing import Callable
 
 from openai import OpenAI
 
-from arxivcat.presenter import Presenter, VERSION, AUTHOR, load_cached_token, save_token, save_model_preference, load_model_preference
+from arxivcat.presenter import Presenter, VERSION, AUTHOR, load_cached_token, save_token, save_model_preference, load_model_preference, load_workspace_path
 
 # ── palette (Catppuccin Mocha) ────────────────────────────────
 BG      = "#1e1e2e"
@@ -267,9 +267,7 @@ class TkApp:
         self._build()
         self._presenter = Presenter(self)
         self._check_and_prompt_token()
-        # Load paper list on startup
-        papers = self._presenter.get_paper_list()
-        self.set_paper_list(papers)
+        self._init_workspace()
 
     # ── UIProtocol ────────────────────────────────────────────
 
@@ -301,7 +299,7 @@ class TkApp:
         self._root.after(0, lambda: [
             b.set_enabled(enabled)
             for b in (self._copy_btn, self._overwrite_btn,
-                      self._open_btn, self._strip_btn)
+                      self._open_btn, self._pdf_btn, self._strip_btn)
         ])
 
     def set_run_busy(self, busy: bool) -> None:
@@ -343,10 +341,16 @@ class TkApp:
         def _do():
             self._paper_list.delete(0, "end")
             self._paper_data = papers
-            for paper in papers:
-                display_text = f"{paper['arxiv_id']}\n{paper['title']}"
+            for i, paper in enumerate(papers):
+                prefix = "" if paper.get("has_body", True) else "⏳ "
+                display_text = f"{prefix}{paper['arxiv_id']}\n{paper['title']}"
                 self._paper_list.insert("end", display_text)
+                if not paper.get("has_body", True):
+                    self._paper_list.itemconfig(i, fg=MUTED)
         self._root.after(0, _do)
+
+    def set_title(self, title: str) -> None:
+        self._root.after(0, lambda: self._root.title(title))
 
     def run(self) -> None:
         self._root.mainloop()
@@ -405,6 +409,34 @@ class TkApp:
         if self._paper_tooltip and self._paper_tooltip.winfo_exists():
             self._paper_tooltip.destroy()
         self._paper_tooltip = None
+
+    def _init_workspace(self):
+        """Check for saved workspace; prompt folder picker if none."""
+        saved = load_workspace_path()
+        if saved and os.path.isdir(saved):
+            self._presenter.open_workspace(saved)
+        else:
+            self._root.after(200, self._prompt_workspace)
+
+    def _prompt_workspace(self):
+        """Show folder picker dialog."""
+        from tkinter import filedialog
+        path = filedialog.askdirectory(
+            title="Select Workspace Folder",
+            parent=self._root,
+        )
+        if path:
+            self._presenter.open_workspace(path)
+        else:
+            self.set_preview(
+                "No workspace selected.\n\n"
+                "Click \"Open Folder\" in the left panel to choose a workspace.",
+                ""
+            )
+
+    def _on_open_folder(self):
+        """Handle Open Folder button click."""
+        self._prompt_workspace()
 
     def _on_view_change(self, *_):
         self._presenter.switch_view()
@@ -682,8 +714,34 @@ class TkApp:
         split.add(chat_col, minsize=240, width=320)
 
         # Paper list panel content
-        tk.Label(paper_list_col, text="Papers", bg=PANEL, fg=ACCENT,
-                 font=("Consolas", 13, "bold")).pack(anchor="w", pady=(0, 10))
+        paper_header = tk.Frame(paper_list_col, bg=PANEL)
+        paper_header.pack(fill="x", pady=(0, 10))
+        tk.Label(paper_header, text="Papers", bg=PANEL, fg=ACCENT,
+                 font=("Consolas", 13, "bold")).pack(side="left")
+        tk.Button(
+            paper_header, text="Open Folder",
+            command=self._on_open_folder,
+            bg=BTN, fg=TEXT, activebackground=BTN_HOV, activeforeground=TEXT,
+            font=("Consolas", 8), relief="flat", padx=6, pady=2,
+            cursor="hand2",
+        ).pack(side="right")
+        tk.Button(
+            paper_header, text="Scan PDFs",
+            command=lambda: self._presenter.scan_workspace_pdfs(),
+            bg=BTN, fg=TEXT, activebackground=BTN_HOV, activeforeground=TEXT,
+            font=("Consolas", 8), relief="flat", padx=6, pady=2,
+            cursor="hand2",
+        ).pack(side="right", padx=(0, 4))
+
+        paper_btn_row = tk.Frame(paper_list_col, bg=PANEL)
+        paper_btn_row.pack(fill="x", pady=(0, 6))
+        tk.Button(
+            paper_btn_row, text="Download All",
+            command=lambda: self._presenter.download_all_pending(),
+            bg=ACCENT, fg=BG, activebackground=RUN_HOV, activeforeground=BG,
+            font=("Consolas", 9, "bold"), relief="flat", padx=10, pady=3,
+            cursor="hand2",
+        ).pack(fill="x")
 
         paper_list_scroll = tk.Scrollbar(paper_list_col, bg=PANEL,
                                          troughcolor=PANEL, activebackground=BTN_HOV)
@@ -841,9 +899,10 @@ class TkApp:
         self._copy_btn = _FlatButton(btn_row, "Copy", self._on_copy)
         self._overwrite_btn = _FlatButton(btn_row, "Overwrite", lambda: self._presenter.overwrite_file())
         self._open_btn = _FlatButton(btn_row, "Open Folder", lambda: self._presenter.open_folder())
+        self._pdf_btn = _FlatButton(btn_row, "Open PDF", lambda: self._presenter.open_pdf_in_browser())
         self._strip_btn = _FlatButton(btn_row, "Strip Comments", lambda: self._presenter.strip_comments())
 
-        for b in (self._copy_btn, self._overwrite_btn, self._open_btn, self._strip_btn):
+        for b in (self._copy_btn, self._overwrite_btn, self._open_btn, self._pdf_btn, self._strip_btn):
             b.pack(side="left", padx=(0, 6))
 
         self._toast_var = tk.StringVar()

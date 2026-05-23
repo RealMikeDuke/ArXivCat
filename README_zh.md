@@ -11,17 +11,20 @@ ArXivCat 是一个处理 arXiv LaTeX 源码包的小型桌面工具。
 
 ## 功能
 
+- **Workspace 模式**：以文件夹为工作区（类似 Obsidian），每个子文件夹对应一篇论文
+- 启动时自动恢复上次打开的 workspace；可随时用 "Open Folder" 切换
+- **Scan PDFs**：一键扫描 workspace 中的 PDF，自动识别 arXiv ID（支持版本号如 `2604.12630v1`）
+- **Download All**：一键批量下载，显示进度 `3/10`，支持断点续传
+- 每篇论文自动下载 PDF 到子文件夹
+- **Open PDF**：在浏览器中打开 arXiv PDF
 - 支持从 arXiv 页面链接、PDF 链接或纯 arXiv ID 下载源码包
-- 自动解压并缓存 arXiv 源码（无限缓存，不限大小）
+- 自动解压并缓存 arXiv 源码（无限缓存）
 - 递归展开 LaTeX `\input` 和 `\include`
 - 自动寻找主 TeX 文件
-- 导出：
-  - `body.tex`
-  - 如果存在则导出 `appendix.tex`
-- **论文历史列表**：左侧面板显示所有已下载论文，点击即可快速重新加载
+- 导出 `body.tex` 和 `appendix.tex`
 - 三栏可拖拽布局（论文列表 / 预览区 / chat）
-- 提供 Tkinter GUI，用于预览和轻量编辑提取结果
-- 右侧带一个轻量 DeepSeek chat 面板，支持流式输出
+- Tkinter GUI 预览和轻量编辑
+- 右侧 DeepSeek chat 面板，流式输出
 
 ## 项目边界
 
@@ -102,15 +105,12 @@ export DEEPSEEK_API_KEY="your-api-key"
 
 ## GUI 使用流程（桌面版）
 
-1. 粘贴 arXiv 链接或 ID
-2. 点击 `Run`
-3. 查看提取后的 `body` 或 `appendix`
-4. 可选使用：
-   - `Copy`
-   - `Overwrite`
-   - `Open Folder`
-   - `Strip Comments`
-5. 用右侧 chat 做快速总结或解释
+1. 首次启动时选择一个 workspace 文件夹
+2. 粘贴 arXiv 链接或 ID → 点击 `Run` → 论文下载并提取到 workspace
+3. 或者：把 PDF 放到 workspace 文件夹 → 点击 `Scan PDFs` → 再点 `Download All`
+4. 点击左侧任意论文即可加载
+5. 使用操作按钮：`Copy`、`Overwrite`、`Open Folder`、`Open PDF`、`Strip Comments`
+6. 用右侧 chat 做快速总结或解释
 
 ## Chat 面板
 
@@ -128,8 +128,9 @@ export DEEPSEEK_API_KEY="your-api-key"
 
 ## 输出目录
 
-- 缓存：`%APPDATA%/ArxivCat/downloads/`
-- 结果：`%APPDATA%/ArxivCat/outputs/`
+- workspace：用户选择的文件夹（每篇论文是一个子文件夹，包含 `body.tex`、`appendix.tex` 和 PDF）
+- 下载缓存：`%APPDATA%/ArxivCat/downloads/`
+- 配置文件：`%APPDATA%/ArxivCat/config.json`
 
 如果缓存目录不可读，ArXivCat 可能会自动重下，或者写到 `*_freshN` 目录。
 

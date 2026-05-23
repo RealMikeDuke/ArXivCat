@@ -1,3 +1,19 @@
+# ArxivCat v0.6.0 - Workspace 模式 & PDF 批量扫描
+
+## 更新内容
+
+- **Workspace 模式**：以文件夹为工作区（类似 Obsidian），每个子文件夹对应一篇论文
+- 启动时自动恢复上次打开的 workspace，首次运行弹出文件夹选择器
+- 左侧面板新增 "Open Folder" 按钮，随时切换 workspace
+- **Scan PDFs**：一键扫描 workspace 中的 PDF，自动识别 arXiv ID（含版本号 v1/v2），创建论文文件夹
+- **Download All**：一键批量下载所有待处理论文，显示进度 `3/10`，支持断点续传
+- 每篇论文同时下载 PDF 到子文件夹，带下载进度显示
+- 新增 "Open PDF" 按钮，在浏览器中打开 arXiv PDF
+- arXiv ID 支持版本号后缀（`2604.12630v1`）
+- 新增依赖 `pymupdf`（用于 PDF 识别）
+
+---
+
 # ArxivCat v0.5.0 - 论文历史列表 & 无限缓存
 
 ## 更新内容

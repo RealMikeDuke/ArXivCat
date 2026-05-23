@@ -18,8 +18,58 @@ def _log(log: LogFn | None, msg: str) -> None:
 
 
 def extract_arxiv_id(input_str):
-    match = re.search(r'(\d+\.\d+)', input_str)
+    match = re.search(r'(\d+\.\d+(?:v\d+)?)', input_str)
     return match.group(1) if match else None
+
+
+def extract_arxiv_id_from_pdf(pdf_path, log: LogFn | None = None):
+    """Extract arXiv ID (with version) from a local PDF file."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        _log(log, "[ERROR] pymupdf not installed (pip install pymupdf)")
+        return None
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        _log(log, f"[WARN] Cannot open PDF {Path(pdf_path).name}: {e}")
+        return None
+
+    arxiv_pat = r'arXiv[:\s]*(\d{4}\.\d{4,5}(?:v\d+)?)'
+    bare_pat = r'(\d{4}\.\d{4,5}(?:v\d+)?)'
+
+    # Strategy 1: PDF metadata
+    meta = doc.metadata or {}
+    for key in ("subject", "keywords", "title", "author"):
+        val = meta.get(key, "") or ""
+        m = re.search(bare_pat, val)
+        if m:
+            doc.close()
+            return m.group(1)
+
+    # Strategy 2: first page arXiv watermark
+    if doc.page_count > 0:
+        text = doc[0].get_text()
+        m = re.search(arxiv_pat, text)
+        if m:
+            doc.close()
+            return m.group(1)
+        m = re.search(bare_pat, text)
+        if m:
+            doc.close()
+            return m.group(1)
+
+    # Strategy 3: first 3 pages
+    for i in range(min(doc.page_count, 3)):
+        text = doc[i].get_text()
+        m = re.search(arxiv_pat, text)
+        if m:
+            doc.close()
+            return m.group(1)
+
+    doc.close()
+    return None
 
 
 def sanitize_filename(name):
@@ -38,6 +88,42 @@ def fetch_title_from_arxiv(arxiv_id, log: LogFn | None = None):
     except Exception as e:
         _log(log, f"[WARN] Failed to fetch title: {e}")
     return None
+
+
+def download_pdf(arxiv_id, output_dir, log: LogFn | None = None):
+    """Download the PDF from arXiv into output_dir. Returns path or None."""
+    pdf_path = output_dir / f"{arxiv_id}.pdf"
+    if pdf_path.exists():
+        _log(log, f"[INFO] PDF already exists: {pdf_path.name}")
+        return pdf_path
+    _log(log, "[INFO] Downloading PDF...")
+    try:
+        resp = requests.get(
+            f"https://arxiv.org/pdf/{arxiv_id}",
+            timeout=120,
+            stream=True,
+        )
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        last_report = 0
+        with open(pdf_path, "wb") as f:
+            for chunk in resp.iter_content(8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded - last_report >= 256 * 1024:
+                        last_report = downloaded
+                        if total:
+                            pct = downloaded * 100 // total
+                            _log(log, f"[INFO] PDF: {downloaded // 1024}/{total // 1024} KB ({pct}%)")
+                        else:
+                            _log(log, f"[INFO] PDF: {downloaded // 1024} KB")
+        _log(log, f"[OK] PDF saved ({pdf_path.stat().st_size // 1024} KB)")
+        return pdf_path
+    except Exception as e:
+        _log(log, f"[WARN] PDF download failed: {e}")
+        return None
 
 
 # ── Download & Extract ────────────────────────────────────────
