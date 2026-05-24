@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
+import re
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkfont
@@ -144,6 +147,111 @@ def _show_token_input_dialog(parent: tk.Tk) -> str | None:
     return result[0]
 
 
+def _show_text_input_dialog(
+    parent: tk.Misc,
+    *,
+    title: str,
+    label: str,
+    initial_value: str = "",
+    confirm_text: str = "OK",
+) -> str | None:
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.geometry("460x190")
+    dialog.configure(bg=BG)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    dialog.update_idletasks()
+    x = parent.winfo_x() + (parent.winfo_width() - dialog.winfo_width()) // 2
+    y = parent.winfo_y() + (parent.winfo_height() - dialog.winfo_height()) // 2
+    dialog.geometry(f"+{x}+{y}")
+
+    outer = tk.Frame(dialog, bg=BG, padx=18, pady=16)
+    outer.pack(fill="both", expand=True)
+
+    tk.Label(
+        outer,
+        text=label,
+        bg=BG,
+        fg=TEXT,
+        font=(FONT_FAMILY, 10),
+        anchor="w",
+    ).pack(fill="x", pady=(0, 8))
+
+    value_var = tk.StringVar(value=initial_value)
+    entry = tk.Entry(
+        outer,
+        textvariable=value_var,
+        bg=PANEL,
+        fg=TEXT,
+        insertbackground=ACCENT,
+        font=(FONT_FAMILY, 10),
+        relief="flat",
+    )
+    entry.pack(fill="x", ipady=8)
+    entry.focus_set()
+    entry.selection_range(0, "end")
+
+    status_var = tk.StringVar(value="")
+    tk.Label(
+        outer,
+        textvariable=status_var,
+        bg=BG,
+        fg=ERROR,
+        font=(FONT_FAMILY, 8),
+        anchor="w",
+    ).pack(fill="x", pady=(8, 0))
+
+    result = [None]
+
+    def _confirm():
+        value = value_var.get().strip()
+        if not value:
+            status_var.set("Title cannot be empty")
+            return
+        result[0] = value
+        dialog.destroy()
+
+    def _cancel():
+        dialog.destroy()
+
+    btn_row = tk.Frame(outer, bg=BG)
+    btn_row.pack(fill="x", pady=(14, 0))
+
+    tk.Button(
+        btn_row,
+        text=confirm_text,
+        command=_confirm,
+        bg=ACCENT,
+        fg=BG,
+        activebackground=RUN_HOV,
+        activeforeground=BG,
+        font=(FONT_FAMILY, 9, "bold"),
+        relief="flat",
+        padx=12,
+        pady=3,
+    ).pack(side="left")
+    tk.Button(
+        btn_row,
+        text="Cancel",
+        command=_cancel,
+        bg=BTN,
+        fg=TEXT,
+        activebackground=BTN_HOV,
+        activeforeground=TEXT,
+        font=(FONT_FAMILY, 9),
+        relief="flat",
+        padx=12,
+        pady=3,
+    ).pack(side="left", padx=(8, 0))
+
+    dialog.bind("<Return>", lambda _e: _confirm())
+    dialog.bind("<Escape>", lambda _e: _cancel())
+    dialog.wait_window()
+    return result[0]
+
+
 def _validate_token(token: str) -> bool:
     """Validate DeepSeek API token by sending a test message."""
     success, _ = _validate_token_with_details(token)
@@ -260,6 +368,11 @@ class TkApp:
         self._chat_output_buffer = ""
         self._deep_thinking = True  # Python bool for storage
         self._chat_cancelled = False
+        self._chat_session_path: Path | None = None
+        self._chat_session_title = ""
+        self._chat_session_paper_dir: Path | None = None
+        self._chat_session_context_snapshot = ""
+        self._chat_session_view_name = "body"
         self._note_save_after = None
         self._loading_preview = False
         self._current_view = "body"
@@ -302,6 +415,7 @@ class TkApp:
                 self._view_label_var.set(label)
             self._update_word_count()
             self._loading_preview = False
+            self._sync_side_chat_paper_context()
         self._root.after(0, _do)
 
     def set_buttons_enabled(self, enabled: bool) -> None:
@@ -614,13 +728,13 @@ class TkApp:
 
         btn_row = tk.Frame(bottom, bg=panel_bg)
         btn_row.pack(fill="x", pady=(8, 0))
+        btn_wrap = tk.Frame(btn_row, bg=panel_bg)
+        btn_wrap.pack(fill="x")
 
-        send_btn = _FlatButton(btn_row, "Send", on_send)
-        stop_btn = _FlatButton(btn_row, "Stop", on_stop)
-        reset_btn = _FlatButton(btn_row, "Reset", on_reset)
-        send_btn.pack(side="left", padx=(0, 6))
-        stop_btn.pack(side="left", padx=(0, 6))
-        reset_btn.pack(side="left")
+        send_btn = _FlatButton(btn_wrap, "Send", on_send)
+        stop_btn = _FlatButton(btn_wrap, "Stop", on_stop)
+        reset_btn = _FlatButton(btn_wrap, "Reset", on_reset)
+        self._flow_pack_widgets(btn_wrap, [send_btn, stop_btn, reset_btn], gap_x=6)
 
         tk.Frame(parent, bg=panel_bg, height=8).pack(fill="x", side="bottom")
 
@@ -713,6 +827,440 @@ class TkApp:
         panel["output"].config(state="normal")
         panel["output"].delete("1.0", "end")
         panel["output"].config(state="disabled")
+
+    def _style_option_menu(self, menu: tk.OptionMenu):
+        menu.config(
+            bg=PANEL,
+            fg=TEXT,
+            font=(FONT_FAMILY, 9),
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="solid",
+            bd=1,
+            highlightthickness=0,
+        )
+        menu["menu"].config(
+            bg=BG,
+            fg=TEXT,
+            font=(FONT_FAMILY, 9),
+            activebackground=ACCENT,
+            activeforeground=BG,
+        )
+
+    def _flow_pack_widgets(
+        self,
+        parent: tk.Widget,
+        widgets: list[tk.Widget],
+        *,
+        gap_x: int = 10,
+        gap_y: int = 6,
+    ):
+        def _reflow(_=None):
+            parent.update_idletasks()
+            available = max(parent.winfo_width(), 120)
+            x = 0
+            y = 0
+            row_height = 0
+            for widget in widgets:
+                widget.update_idletasks()
+                req_w = widget.winfo_reqwidth()
+                req_h = widget.winfo_reqheight()
+                if x > 0 and x + req_w > available:
+                    x = 0
+                    y += row_height + gap_y
+                    row_height = 0
+                widget.place(x=x, y=y)
+                x += req_w + gap_x
+                row_height = max(row_height, req_h)
+            parent.config(height=y + row_height)
+
+        parent.bind("<Configure>", _reflow)
+        parent.after(0, _reflow)
+
+    def _global_chat_dir(self) -> Path | None:
+        workspace_path = getattr(self._presenter, "workspace_path", None)
+        if not workspace_path:
+            return None
+        chat_dir = Path(workspace_path) / "arxivcat_global_chats"
+        chat_dir.mkdir(parents=True, exist_ok=True)
+        return chat_dir
+
+    def _paper_chat_dir(self) -> Path | None:
+        paper_dir = getattr(self._presenter, "output_dir", None)
+        if not paper_dir:
+            return None
+        chat_dir = Path(paper_dir) / "arxiv_chats"
+        chat_dir.mkdir(parents=True, exist_ok=True)
+        return chat_dir
+
+    def _restore_chat_session_preferences(
+        self,
+        *,
+        model: str | None,
+        deep_thinking: bool | None,
+        subtitle_label: tk.Label | None = None,
+        model_var: tk.StringVar | None = None,
+    ):
+        if model in self.CHAT_MODELS:
+            self._chat_model = model
+            self._save_model_preference()
+            if hasattr(self, "_chat_model_label"):
+                self._chat_model_label.config(text=self.CHAT_MODELS[model])
+            if subtitle_label is not None:
+                subtitle_label.config(text=self.CHAT_MODELS[model])
+            if model_var is not None:
+                model_var.set(model)
+        if deep_thinking is not None and hasattr(self, "_deep_thinking_enabled"):
+            self._deep_thinking_enabled.set(bool(deep_thinking))
+
+    def _default_chat_session_title(self, kind: str) -> str:
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if kind == "global":
+            return f"Global Chat {stamp}"
+        arxiv_id = self.get_url_input().strip() or "Paper"
+        return f"{arxiv_id} {stamp}"
+
+    def _new_chat_session_path(self, session_dir: Path) -> Path:
+        base = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = session_dir / f"{base}.json"
+        suffix = 1
+        while path.exists():
+            path = session_dir / f"{base}_{suffix}.json"
+            suffix += 1
+        return path
+
+    def _serialize_chat_history(self, history: list[tuple[str, str]]) -> list[dict]:
+        return [{"speaker": speaker, "content": content} for speaker, content in history]
+
+    def _deserialize_chat_history(self, data: list[dict]) -> list[tuple[str, str]]:
+        history = []
+        for item in data or []:
+            speaker = item.get("speaker", "")
+            content = item.get("content", "")
+            if speaker:
+                history.append((speaker, content))
+        return history
+
+    def _save_chat_session(
+        self,
+        *,
+        session_dir: Path | None,
+        session_path: Path | None,
+        session_title: str,
+        kind: str,
+        history: list[tuple[str, str]],
+        context_selection: dict | None = None,
+        context_snapshot: str | None = None,
+        view_name: str | None = None,
+    ) -> tuple[Path | None, str]:
+        if session_dir is None or not history:
+            return session_path, session_title
+        path = session_path or self._new_chat_session_path(session_dir)
+        title = session_title or self._default_chat_session_title(kind)
+        payload = {
+            "title": title,
+            "kind": kind,
+            "model": self._chat_model,
+            "deep_thinking": bool(self._deep_thinking_enabled.get()),
+            "messages": self._serialize_chat_history(history),
+            "context_selection": context_selection,
+            "context_snapshot": context_snapshot,
+            "view_name": view_name,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path, title
+
+    def _load_chat_session(self, path: Path) -> dict | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return {
+            "path": path,
+            "title": payload.get("title") or path.stem,
+            "kind": payload.get("kind") or "paper",
+            "model": payload.get("model") or None,
+            "deep_thinking": payload.get("deep_thinking"),
+            "history": self._deserialize_chat_history(payload.get("messages") or []),
+            "context_selection": payload.get("context_selection") or None,
+            "context_snapshot": payload.get("context_snapshot") or "",
+            "view_name": payload.get("view_name") or "body",
+            "updated_at": payload.get("updated_at") or "",
+        }
+
+    def _rename_chat_session(self, path: Path | None, title: str):
+        if path is None:
+            return
+        payload = self._load_chat_session(path)
+        if payload is None:
+            return
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["title"] = title
+        raw["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _list_chat_sessions(self, session_dir: Path | None) -> list[dict]:
+        if session_dir is None or not session_dir.exists():
+            return []
+        items = []
+        for path in sorted(session_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            payload = self._load_chat_session(path)
+            if payload is not None:
+                items.append(payload)
+        return items
+
+    def _render_chat_history_to_panel(self, panel: dict, history: list[tuple[str, str]]):
+        self._reset_panel_output(panel)
+        for speaker, content in history:
+            if speaker == "you":
+                color = ACCENT
+            elif speaker == "deepseek":
+                color = SUCCESS
+            elif speaker == "system":
+                color = ERROR
+            else:
+                color = TEXT
+            self._append_panel_message(panel, speaker, content, color)
+
+    def _refresh_session_listbox(
+        self,
+        listbox: tk.Listbox,
+        session_items: list[dict],
+        current_path: Path | None,
+    ):
+        listbox.delete(0, "end")
+        selected_index = None
+        for index, item in enumerate(session_items):
+            title = item["title"]
+            listbox.insert("end", title)
+            if current_path and item["path"] == current_path:
+                selected_index = index
+        if selected_index is not None:
+            listbox.selection_set(selected_index)
+            listbox.see(selected_index)
+
+    def _open_chat_history_dialog(
+        self,
+        *,
+        title: str,
+        session_dir: Path | None,
+        current_path: Path | None,
+        on_open: Callable[[dict], None],
+        on_new: Callable[[], None],
+        on_rename: Callable[[dict], None],
+    ):
+        if session_dir is None:
+            self.show_toast("No chat directory available")
+            return
+        dialog = tk.Toplevel(self._root)
+        dialog.title(title)
+        dialog.geometry("360x500")
+        dialog.configure(bg=PANEL)
+        dialog.transient(self._root)
+
+        outer = tk.Frame(dialog, bg=PANEL, padx=12, pady=12)
+        outer.pack(fill="both", expand=True)
+
+        listbox = tk.Listbox(
+            outer,
+            bg=BTN,
+            fg=TEXT,
+            selectbackground=ACCENT,
+            selectforeground=BG,
+            font=self._paper_list_font,
+            relief="flat",
+            activestyle="none",
+        )
+        listbox.pack(fill="both", expand=True)
+
+        session_items = self._list_chat_sessions(session_dir)
+        self._refresh_session_listbox(listbox, session_items, current_path)
+
+        def _selected_item() -> dict | None:
+            selection = listbox.curselection()
+            if not selection:
+                return None
+            index = selection[0]
+            if 0 <= index < len(session_items):
+                return session_items[index]
+            return None
+
+        def _refresh():
+            nonlocal session_items
+            session_items = self._list_chat_sessions(session_dir)
+            self._refresh_session_listbox(listbox, session_items, current_path)
+
+        def _open_selected():
+            item = _selected_item()
+            if item is None:
+                return
+            on_open(item)
+            dialog.destroy()
+
+        def _rename_selected():
+            item = _selected_item()
+            if item is None:
+                return
+            on_rename(item)
+            _refresh()
+
+        btn_row = tk.Frame(outer, bg=PANEL)
+        btn_row.pack(fill="x", pady=(8, 0))
+        btn_wrap = tk.Frame(btn_row, bg=PANEL)
+        btn_wrap.pack(fill="x")
+        btn_widgets = []
+        open_btn = tk.Button(
+            btn_wrap,
+            text="Open",
+            command=_open_selected,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        btn_widgets.append(open_btn)
+        rename_btn = tk.Button(
+            btn_wrap,
+            text="Rename",
+            command=_rename_selected,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        btn_widgets.append(rename_btn)
+        new_btn = tk.Button(
+            btn_wrap,
+            text="New",
+            command=lambda: (on_new(), dialog.destroy()),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        btn_widgets.append(new_btn)
+        close_btn = tk.Button(
+            btn_wrap,
+            text="Close",
+            command=dialog.destroy,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        btn_widgets.append(close_btn)
+        self._flow_pack_widgets(btn_wrap, btn_widgets, gap_x=6)
+        listbox.bind("<Double-Button-1>", lambda _: _open_selected())
+
+    def _sync_side_chat_paper_context(self):
+        current_paper_dir = getattr(self._presenter, "output_dir", None)
+        if current_paper_dir == self._chat_session_paper_dir:
+            return
+        self._chat_session_paper_dir = current_paper_dir
+        self._chat_session_path = None
+        self._chat_session_title = ""
+        self._chat_session_context_snapshot = ""
+        self._chat_session_view_name = self.get_view_mode() if hasattr(self, "_view_var") else "body"
+        self._chat_history.clear()
+        if hasattr(self, "_chat_panel"):
+            self._render_chat_history_to_panel(self._chat_panel, self._chat_history)
+            self._clear_chat_input()
+            self._set_chat_status("new paper chat", MUTED)
+            self._chat_metrics_var.set("")
+
+    def _new_side_chat_session(self):
+        self._sync_side_chat_paper_context()
+        self._chat_session_path = None
+        self._chat_session_title = ""
+        self._chat_session_context_snapshot = ""
+        self._chat_session_view_name = self.get_view_mode()
+        self._chat_history.clear()
+        self._render_chat_history_to_panel(self._chat_panel, self._chat_history)
+        self._clear_chat_input()
+        self._set_chat_status("new chat", MUTED)
+        self._chat_metrics_var.set("")
+
+    def _save_side_chat_session(self):
+        self._sync_side_chat_paper_context()
+        session_dir = self._paper_chat_dir()
+        self._chat_session_path, self._chat_session_title = self._save_chat_session(
+            session_dir=session_dir,
+            session_path=self._chat_session_path,
+            session_title=self._chat_session_title,
+            kind="paper",
+            history=self._chat_history,
+            context_snapshot=self._chat_session_context_snapshot,
+            view_name=self._chat_session_view_name,
+        )
+        if self._chat_session_path is not None:
+            self._set_chat_status(f"saved: {self._chat_session_title}", SUCCESS)
+
+    def _rename_side_chat_session(self, item: dict | None = None):
+        self._sync_side_chat_paper_context()
+        target_path = item["path"] if item is not None else self._chat_session_path
+        target_title = item["title"] if item is not None else self._chat_session_title
+        if target_path is None:
+            self._save_side_chat_session()
+            target_path = self._chat_session_path
+            target_title = self._chat_session_title
+        if target_path is None:
+            return
+        new_title = _show_text_input_dialog(
+            self._root,
+            title="Rename Chat",
+            label="Chat title",
+            initial_value=target_title or self._default_chat_session_title("paper"),
+            confirm_text="Rename",
+        )
+        if not new_title:
+            return
+        self._rename_chat_session(target_path, new_title.strip())
+        if item is None or target_path == self._chat_session_path:
+            self._chat_session_title = new_title.strip()
+            self._set_chat_status(f"renamed: {self._chat_session_title}", SUCCESS)
+
+    def _open_side_chat_session(self, item: dict):
+        self._sync_side_chat_paper_context()
+        self._chat_session_path = item["path"]
+        self._chat_session_title = item["title"]
+        self._chat_session_context_snapshot = item.get("context_snapshot") or ""
+        self._chat_session_view_name = item.get("view_name") or self.get_view_mode()
+        self._chat_history = list(item["history"])
+        self._restore_chat_session_preferences(
+            model=item.get("model"),
+            deep_thinking=item.get("deep_thinking"),
+        )
+        self._render_chat_history_to_panel(self._chat_panel, self._chat_history)
+        self._clear_chat_input()
+        self._set_chat_status(f"opened: {self._chat_session_title}", SUCCESS)
+
+    def _show_side_chat_history(self):
+        self._sync_side_chat_paper_context()
+        self._open_chat_history_dialog(
+            title="Paper Chat History",
+            session_dir=self._paper_chat_dir(),
+            current_path=self._chat_session_path,
+            on_open=self._open_side_chat_session,
+            on_new=self._new_side_chat_session,
+            on_rename=self._rename_side_chat_session,
+        )
 
     def _set_chat_status(self, msg: str, color: str = MUTED):
         self._set_panel_status(self._chat_panel, msg, color)
@@ -864,8 +1412,20 @@ class TkApp:
         papers = self._presenter.get_paper_list()
         for index, paper in enumerate(papers, 1):
             paper_dir = self._presenter.workspace_path / paper["folder_name"]
+            body_path = paper_dir / "body.tex"
+            appendix_path = paper_dir / "appendix.tex"
+            note_path = paper_dir / "note.txt"
             description_path = paper_dir / "description.md"
+            body = ""
+            appendix = ""
+            note = ""
             description = ""
+            if body_path.exists():
+                body = body_path.read_text(encoding="utf-8", errors="ignore").strip()
+            if appendix_path.exists():
+                appendix = appendix_path.read_text(encoding="utf-8", errors="ignore").strip()
+            if note_path.exists():
+                note = note_path.read_text(encoding="utf-8", errors="ignore").strip()
             if description_path.exists():
                 description = description_path.read_text(encoding="utf-8", errors="ignore").strip()
             entries.append({
@@ -873,21 +1433,302 @@ class TkApp:
                 "arxiv_id": paper["arxiv_id"],
                 "title": paper["title"],
                 "folder_name": paper["folder_name"],
+                "body": body,
+                "appendix": appendix,
+                "note": note,
                 "description": description,
             })
         return entries
 
-    def _build_description_context(self, entries: list[dict]) -> str:
+    def _default_global_context_selection(self, entries: list[dict]) -> dict[str, dict[str, bool]]:
+        return {
+            entry["folder_name"]: {
+                "body": False,
+                "appendix": False,
+                "description": True,
+                "note": False,
+            }
+            for entry in entries
+        }
+
+    def _format_global_context_summary(self, selection: dict[str, dict[str, bool]]) -> str:
+        counts = {
+            "body": 0,
+            "appendix": 0,
+            "description": 0,
+            "note": 0,
+        }
+        for paper_selection in selection.values():
+            for field in counts:
+                if paper_selection.get(field):
+                    counts[field] += 1
+        return (
+            f"ctx: d={counts['description']} | b={counts['body']} | "
+            f"a={counts['appendix']} | n={counts['note']}"
+        )
+
+    def _build_description_context(self, entries: list[dict], selection: dict[str, dict[str, bool]]) -> str:
         blocks = []
         for entry in entries:
-            description = entry["description"] or "(description unavailable)"
+            entry_selection = selection.get(entry["folder_name"], {})
+            sections = []
+            for field, label in (
+                ("body", "body"),
+                ("appendix", "appendix"),
+                ("description", "description"),
+                ("note", "note"),
+            ):
+                if not entry_selection.get(field, False):
+                    continue
+                content = entry.get(field, "").strip() or f"({label} unavailable)"
+                sections.append(f"{label}:\n{content}")
+            if not sections:
+                continue
             block = (
                 f"[{entry['index']}] {entry['arxiv_id']} | {entry['title']}\n"
                 f"folder: {entry['folder_name']}\n"
-                f"description:\n{description}"
+                f"\n\n".join(sections)
             )
             blocks.append(block)
         return "\n\n---\n\n".join(blocks)
+
+    def _open_global_context_dialog(
+        self,
+        parent,
+        entries: list[dict],
+        selection: dict[str, dict[str, bool]],
+        on_apply: Callable[[], None],
+    ):
+        dialog = tk.Toplevel(parent)
+        dialog.title("Select Context")
+        dialog.geometry("980x620")
+        dialog.configure(bg=PANEL)
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        outer = tk.Frame(dialog, bg=PANEL, padx=12, pady=12)
+        outer.pack(fill="both", expand=True)
+
+        tk.Label(
+            outer,
+            text="Select context fields for Global Chat",
+            bg=PANEL,
+            fg=ACCENT,
+            font=(FONT_FAMILY, 12, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            outer,
+            text="Default is all descriptions. Enable extra fields per paper only when needed.",
+            bg=PANEL,
+            fg=MUTED,
+            font=(FONT_FAMILY, 9),
+        ).pack(anchor="w", pady=(2, 10))
+
+        vars_by_paper: dict[str, dict[str, tk.BooleanVar]] = {}
+        for entry in entries:
+            vars_by_paper[entry["folder_name"]] = {
+                field: tk.BooleanVar(value=selection.get(entry["folder_name"], {}).get(field, field == "description"))
+                for field in ("body", "appendix", "description", "note")
+            }
+
+        controls = tk.Frame(outer, bg=PANEL)
+        controls.pack(fill="x", pady=(0, 8))
+        controls_wrap = tk.Frame(controls, bg=PANEL)
+        controls_wrap.pack(fill="x")
+
+        def _toggle_all(field: str):
+            all_selected = all(
+                paper_vars[field].get()
+                for paper_vars in vars_by_paper.values()
+            )
+            for paper_vars in vars_by_paper.values():
+                paper_vars[field].set(not all_selected)
+
+        def _restore_default():
+            for paper_vars in vars_by_paper.values():
+                paper_vars["body"].set(False)
+                paper_vars["appendix"].set(False)
+                paper_vars["description"].set(True)
+                paper_vars["note"].set(False)
+
+        controls_widgets = []
+
+        all_body_btn = tk.Button(
+            controls_wrap,
+            text="All Body",
+            command=lambda: _toggle_all("body"),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        controls_widgets.append(all_body_btn)
+        all_appendix_btn = tk.Button(
+            controls_wrap,
+            text="All Appendix",
+            command=lambda: _toggle_all("appendix"),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        controls_widgets.append(all_appendix_btn)
+        all_description_btn = tk.Button(
+            controls_wrap,
+            text="All Description",
+            command=lambda: _toggle_all("description"),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        controls_widgets.append(all_description_btn)
+        all_note_btn = tk.Button(
+            controls_wrap,
+            text="All Note",
+            command=lambda: _toggle_all("note"),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        controls_widgets.append(all_note_btn)
+        default_description_btn = tk.Button(
+            controls_wrap,
+            text="Default Description",
+            command=_restore_default,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        controls_widgets.append(default_description_btn)
+
+        self._flow_pack_widgets(controls_wrap, controls_widgets, gap_x=6)
+
+        table_wrap = tk.Frame(outer, bg=BTN)
+        table_wrap.pack(fill="both", expand=True)
+
+        table_scroll = ttk.Scrollbar(
+            table_wrap,
+            orient="vertical",
+            style="AC.Vertical.TScrollbar",
+        )
+        table_scroll.pack(side="right", fill="y")
+
+        canvas = tk.Canvas(
+            table_wrap,
+            bg=BTN,
+            highlightthickness=0,
+            yscrollcommand=table_scroll.set,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        table_scroll.config(command=canvas.yview)
+
+        table_frame = tk.Frame(canvas, bg=BTN)
+        canvas_window = canvas.create_window((0, 0), window=table_frame, anchor="nw")
+
+        def _sync_table(_=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(canvas_window, width=canvas.winfo_width())
+
+        table_frame.bind("<Configure>", _sync_table)
+        canvas.bind("<Configure>", _sync_table)
+
+        headers = ("paper", "body", "appendix", "description", "note")
+        for col, label in enumerate(headers):
+            tk.Label(
+                table_frame,
+                text=label,
+                bg=BTN,
+                fg=ACCENT,
+                font=(FONT_FAMILY, 9, "bold"),
+                anchor="w" if col == 0 else "center",
+            ).grid(row=0, column=col, sticky="ew", padx=8, pady=(8, 6))
+
+        for row, entry in enumerate(entries, 1):
+            tk.Label(
+                table_frame,
+                text=f"[{entry['index']}] {entry['arxiv_id']}\n{entry['title']}",
+                bg=BTN,
+                fg=TEXT,
+                justify="left",
+                anchor="w",
+                wraplength=520,
+                font=(FONT_FAMILY, 8),
+            ).grid(row=row, column=0, sticky="ew", padx=8, pady=4)
+            for col, field in enumerate(("body", "appendix", "description", "note"), 1):
+                tk.Checkbutton(
+                    table_frame,
+                    variable=vars_by_paper[entry["folder_name"]][field],
+                    bg=BTN,
+                    fg=MUTED,
+                    activebackground=BTN,
+                    activeforeground=TEXT,
+                    selectcolor=BG,
+                ).grid(row=row, column=col, padx=8, pady=4)
+
+        table_frame.grid_columnconfigure(0, weight=1)
+
+        btn_row = tk.Frame(outer, bg=PANEL)
+        btn_row.pack(fill="x", pady=(10, 0))
+
+        def _apply_and_close():
+            for entry in entries:
+                folder_name = entry["folder_name"]
+                selection[folder_name] = {
+                    field: vars_by_paper[folder_name][field].get()
+                    for field in ("body", "appendix", "description", "note")
+                }
+            on_apply()
+            dialog.destroy()
+
+        tk.Button(
+            btn_row,
+            text="Apply",
+            command=_apply_and_close,
+            bg=ACCENT,
+            fg=BG,
+            activebackground=RUN_HOV,
+            activeforeground=BG,
+            font=(FONT_FAMILY, 9, "bold"),
+            relief="flat",
+            padx=12,
+            pady=3,
+        ).pack(side="left")
+        tk.Button(
+            btn_row,
+            text="Close",
+            command=dialog.destroy,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=12,
+            pady=3,
+        ).pack(side="left", padx=(8, 0))
 
     def _on_global_chat(self):
         entries = self._collect_workspace_descriptions()
@@ -897,15 +1738,137 @@ class TkApp:
 
         dialog = tk.Toplevel(self._root)
         dialog.title("Global Chat")
-        dialog.geometry("880x700")
+        dialog.geometry("1180x760")
         dialog.configure(bg=PANEL)
         dialog.transient(self._root)
 
         wrap = tk.Frame(dialog, bg=PANEL, padx=12, pady=12)
         wrap.pack(fill="both", expand=True)
 
-        global_history: list[tuple[str, str]] = []
+        history_col = tk.Frame(wrap, bg=PANEL, width=260)
+        history_col.pack(side="left", fill="y", padx=(0, 12))
+        history_col.pack_propagate(False)
+
+        chat_col = tk.Frame(wrap, bg=PANEL)
+        chat_col.pack(side="left", fill="both", expand=True)
+
+        tk.Label(history_col, text="global chats", bg=PANEL, fg=ACCENT,
+                 font=(FONT_FAMILY, 12, "bold")).pack(anchor="w")
+
+        history_list = tk.Listbox(
+            history_col,
+            bg=BTN,
+            fg=TEXT,
+            selectbackground=ACCENT,
+            selectforeground=BG,
+            font=self._paper_list_font,
+            relief="flat",
+            activestyle="none",
+        )
+        history_list.pack(fill="both", expand=True, pady=(8, 8))
+
+        global_state = {
+            "history": [],
+            "session_path": None,
+            "session_title": "",
+            "context_snapshot": "",
+            "model_var": None,
+        }
         global_panel: dict = {}
+        global_selection = self._default_global_context_selection(entries)
+        session_items: list[dict] = []
+
+        def _refresh_global_history_list():
+            nonlocal session_items
+            session_items = self._list_chat_sessions(self._global_chat_dir())
+            self._refresh_session_listbox(history_list, session_items, global_state["session_path"])
+
+        def _selected_global_item() -> dict | None:
+            selection = history_list.curselection()
+            if not selection:
+                return None
+            index = selection[0]
+            if 0 <= index < len(session_items):
+                return session_items[index]
+            return None
+
+        def _refresh_global_metrics():
+            if global_panel:
+                global_panel["metrics_var"].set(self._format_global_context_summary(global_selection))
+
+        def _new_global_session():
+            global_state["history"].clear()
+            global_state["session_path"] = None
+            global_state["session_title"] = ""
+            global_state["context_snapshot"] = ""
+            global_selection.clear()
+            global_selection.update(self._default_global_context_selection(entries))
+            if global_panel:
+                self._render_chat_history_to_panel(global_panel, global_state["history"])
+                self._clear_panel_input(global_panel)
+                self._set_panel_status(global_panel, "new global chat", MUTED)
+                _refresh_global_metrics()
+            _refresh_global_history_list()
+
+        def _save_global_session():
+            session_path, session_title = self._save_chat_session(
+                session_dir=self._global_chat_dir(),
+                session_path=global_state["session_path"],
+                session_title=global_state["session_title"],
+                kind="global",
+                history=global_state["history"],
+                context_selection=global_selection,
+                context_snapshot=global_state["context_snapshot"],
+            )
+            global_state["session_path"] = session_path
+            global_state["session_title"] = session_title
+            if session_path is not None:
+                self._set_panel_status(global_panel, f"saved: {session_title}", SUCCESS)
+                _refresh_global_history_list()
+
+        def _rename_global_session(item: dict | None = None):
+            target_path = item["path"] if item is not None else global_state["session_path"]
+            target_title = item["title"] if item is not None else global_state["session_title"]
+            if target_path is None:
+                _save_global_session()
+                target_path = global_state["session_path"]
+                target_title = global_state["session_title"]
+            if target_path is None:
+                return
+            new_title = _show_text_input_dialog(
+                dialog,
+                title="Rename Global Chat",
+                label="Chat title",
+                initial_value=target_title or self._default_chat_session_title("global"),
+                confirm_text="Rename",
+            )
+            if not new_title:
+                return
+            self._rename_chat_session(target_path, new_title.strip())
+            if item is None or target_path == global_state["session_path"]:
+                global_state["session_title"] = new_title.strip()
+                self._set_panel_status(global_panel, f"renamed: {global_state['session_title']}", SUCCESS)
+            _refresh_global_history_list()
+
+        def _open_global_session(item: dict):
+            global_state["session_path"] = item["path"]
+            global_state["session_title"] = item["title"]
+            global_state["history"] = list(item["history"])
+            global_state["context_snapshot"] = item.get("context_snapshot") or ""
+            saved_selection = item.get("context_selection") or self._default_global_context_selection(entries)
+            global_selection.clear()
+            global_selection.update(saved_selection)
+            self._restore_chat_session_preferences(
+                model=item.get("model"),
+                deep_thinking=item.get("deep_thinking"),
+                subtitle_label=global_panel.get("subtitle_label"),
+                model_var=global_state.get("model_var"),
+            )
+            self._render_chat_history_to_panel(global_panel, global_state["history"])
+            self._clear_panel_input(global_panel)
+            self._set_panel_status(global_panel, f"opened: {global_state['session_title']}", SUCCESS)
+            _refresh_global_metrics()
+            _refresh_global_history_list()
 
         def _do_global_chat():
             if global_panel.get("busy"):
@@ -914,8 +1877,13 @@ class TkApp:
             if not query:
                 self._set_panel_status(global_panel, "empty prompt", ERROR)
                 return
-            context = self._build_description_context(entries)
-            global_history.append(("you", query))
+            if not global_state["context_snapshot"]:
+                global_state["context_snapshot"] = self._build_description_context(entries, global_selection)
+            context = global_state["context_snapshot"]
+            if not context.strip():
+                self._set_panel_status(global_panel, "no context selected", ERROR)
+                return
+            global_state["history"].append(("you", query))
             self._append_panel_message(global_panel, "you", query, ACCENT)
             global_panel["input"].delete("1.0", "end")
             global_panel["input"].config(fg=TEXT)
@@ -925,20 +1893,21 @@ class TkApp:
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a global workspace chat assistant inside an arXiv paper extraction tool. You can only use the provided numbered paper descriptions from the current workspace. Maintain short conversation continuity. If the user wants papers, recommend only from the given list. Include bracketed numbers, arXiv ids, exact titles, and concise reasons when pointing to papers. If the user asks a general question unrelated to the provided workspace, answer briefly and say it is outside the workspace scope. Output markdown only."
+                    "content": "You are a global workspace chat assistant inside an arXiv paper extraction tool. You can only use the provided numbered paper context from the current workspace. Maintain short conversation continuity. If the user wants papers, recommend only from the given list. Include bracketed numbers, arXiv ids, exact titles, and concise reasons when pointing to papers. If the user asks a general question unrelated to the provided workspace, answer briefly and say it is outside the workspace scope. Output markdown only."
                 },
                 {
                     "role": "user",
-                    "content": f"Workspace paper descriptions:\n{context}"
+                    "content": f"Workspace paper context:\n{context}"
                 }
             ]
-            for speaker, message in global_history[-12:]:
+            for speaker, message in global_state["history"][-12:]:
                 role = "user" if speaker == "you" else "assistant"
                 messages.append({"role": role, "content": message})
 
             def _on_complete(answer: str):
                 if answer:
-                    global_history.append(("deepseek", answer))
+                    global_state["history"].append(("deepseek", answer))
+                    _save_global_session()
                 self._root.after(0, lambda: self._set_panel_busy(global_panel, False))
                 self._root.after(0, lambda: self._clear_panel_input(global_panel))
 
@@ -960,16 +1929,19 @@ class TkApp:
         def _on_global_reset():
             if global_panel.get("busy"):
                 return
-            global_history.clear()
-            self._reset_panel_output(global_panel)
-            self._clear_panel_input(global_panel)
+            _new_global_session()
             self._set_panel_status(global_panel, "reset", MUTED)
 
         def _build_global_header(parent):
             controls_row = tk.Frame(parent, bg=PANEL)
             controls_row.pack(fill="x", pady=(0, 10))
-            tk.Checkbutton(
-                controls_row,
+            controls_wrap = tk.Frame(controls_row, bg=PANEL)
+            controls_wrap.pack(fill="x")
+
+            controls_widgets = []
+
+            deep_thinking_btn = tk.Checkbutton(
+                controls_wrap,
                 text="Deep Thinking",
                 variable=self._deep_thinking_enabled,
                 bg=PANEL,
@@ -978,25 +1950,72 @@ class TkApp:
                 activeforeground=TEXT,
                 selectcolor=BG,
                 font=(FONT_FAMILY, 9),
-            ).pack(side="left", padx=(0, 10))
+            )
+            controls_widgets.append(deep_thinking_btn)
 
             global_model_var = tk.StringVar(value=self._chat_model)
+            global_state["model_var"] = global_model_var
 
             def _on_global_model_change(value):
                 self._on_model_change(value)
                 global_panel["subtitle_label"].config(text=self.CHAT_MODELS[value])
 
             model_dropdown = tk.OptionMenu(
-                controls_row,
+                controls_wrap,
                 global_model_var,
                 *self.CHAT_MODELS.keys(),
                 command=_on_global_model_change,
             )
-            _style_option_menu(model_dropdown)
-            model_dropdown.pack(side="left", padx=(0, 10))
+            self._style_option_menu(model_dropdown)
+            controls_widgets.append(model_dropdown)
 
-            tk.Button(
-                controls_row,
+            new_btn = tk.Button(
+                controls_wrap,
+                text="New",
+                command=_new_global_session,
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(new_btn)
+
+            rename_btn = tk.Button(
+                controls_wrap,
+                text="Rename",
+                command=lambda: _rename_global_session(),
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(rename_btn)
+
+            select_context_btn = tk.Button(
+                controls_wrap,
+                text="Select Context",
+                command=lambda: self._open_global_context_dialog(dialog, entries, global_selection, lambda: (global_state.__setitem__("context_snapshot", ""), _refresh_global_metrics())),
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(select_context_btn)
+
+            close_btn = tk.Button(
+                controls_wrap,
                 text="Close",
                 command=dialog.destroy,
                 bg=BTN,
@@ -1007,10 +2026,13 @@ class TkApp:
                 relief="flat",
                 padx=10,
                 pady=2,
-            ).pack(side="left")
+            )
+            controls_widgets.append(close_btn)
+
+            self._flow_pack_widgets(controls_wrap, controls_widgets)
 
         global_panel = self._create_chat_panel(
-            wrap,
+            chat_col,
             title="global chat",
             subtitle=self.CHAT_MODELS[self._chat_model],
             panel_bg=PANEL,
@@ -1021,18 +2043,82 @@ class TkApp:
             on_reset=_on_global_reset,
             header_builder=_build_global_header,
         )
-        global_panel["metrics_var"].set(f"ctx: {len(entries)} papers")
+
+        history_btn_row = tk.Frame(history_col, bg=PANEL)
+        history_btn_row.pack(fill="x", pady=(0, 0))
+        history_btn_wrap = tk.Frame(history_btn_row, bg=PANEL)
+        history_btn_wrap.pack(fill="x")
+        history_btn_widgets = []
+        open_history_btn = tk.Button(
+            history_btn_wrap,
+            text="Open",
+            command=lambda: _selected_global_item() and _open_global_session(_selected_global_item()),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        history_btn_widgets.append(open_history_btn)
+        rename_history_btn = tk.Button(
+            history_btn_wrap,
+            text="Rename",
+            command=lambda: _selected_global_item() and _rename_global_session(_selected_global_item()),
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        history_btn_widgets.append(rename_history_btn)
+        self._flow_pack_widgets(history_btn_wrap, history_btn_widgets, gap_x=6)
+
+        history_new_row = tk.Frame(history_col, bg=PANEL)
+        history_new_row.pack(fill="x", pady=(8, 0))
+        history_new_wrap = tk.Frame(history_new_row, bg=PANEL)
+        history_new_wrap.pack(fill="x")
+        history_new_widgets = []
+        new_history_btn = tk.Button(
+            history_new_wrap,
+            text="New",
+            command=_new_global_session,
+            bg=BTN,
+            fg=TEXT,
+            activebackground=BTN_HOV,
+            activeforeground=TEXT,
+            font=(FONT_FAMILY, 9),
+            relief="flat",
+            padx=10,
+            pady=2,
+        )
+        history_new_widgets.append(new_history_btn)
+        self._flow_pack_widgets(history_new_wrap, history_new_widgets, gap_x=6)
+
+        history_list.bind("<Double-Button-1>", lambda _: _selected_global_item() and _open_global_session(_selected_global_item()))
+        _refresh_global_history_list()
+        _refresh_global_metrics()
 
     def _on_chat_send(self):
         if getattr(self, "_chat_busy", False):
             return
+        self._sync_side_chat_paper_context()
         prompt = self._get_chat_input()
         if not prompt:
             self._set_chat_status("empty prompt", ERROR)
             return
 
-        preview_text = self.get_preview_text().strip()
-        view_name = self.get_view_mode()
+        if not self._chat_session_context_snapshot:
+            preview_text = self.get_preview_text().strip()
+            self._chat_session_context_snapshot = preview_text[:12000] if preview_text else "(no preview loaded)"
+            self._chat_session_view_name = self.get_view_mode()
+        context = self._chat_session_context_snapshot
+        view_name = self._chat_session_view_name
         self._chat_history.append(("you", prompt))
         self._append_chat_message("you", prompt, ACCENT)
         self._chat_input.delete("1.0", "end")
@@ -1040,7 +2126,6 @@ class TkApp:
         self._set_chat_busy(True)
         self._set_chat_status("thinking...", MUTED)
 
-        context = preview_text[:12000] if preview_text else "(no preview loaded)"
         messages = [
             {
                 "role": "system",
@@ -1058,6 +2143,7 @@ class TkApp:
         def _on_complete(answer: str):
             if answer:
                 self._chat_history.append(("deepseek", answer))
+                self._save_side_chat_session()
             self._root.after(0, self._set_chat_busy, False)
             self._root.after(0, self._clear_chat_input)
 
@@ -1078,11 +2164,7 @@ class TkApp:
     def _on_chat_reset(self):
         if getattr(self, "_chat_busy", False):
             return
-        self._chat_history.clear()
-        self._chat_output.config(state="normal")
-        self._chat_output.delete("1.0", "end")
-        self._chat_output.config(state="disabled")
-        self._clear_chat_input()
+        self._new_side_chat_session()
         self._set_chat_status("reset", MUTED)
 
     def _on_chat_stop(self):
@@ -1177,24 +2259,29 @@ class TkApp:
         # Paper list panel content
         paper_header = tk.Frame(paper_list_col, bg=PANEL)
         paper_header.pack(fill="x", pady=(0, 10))
-        tk.Label(paper_header, text="Papers", bg=PANEL, fg=ACCENT,
-                 font=(FONT_FAMILY, 13, "bold")).pack(side="left")
+        paper_header_wrap = tk.Frame(paper_header, bg=PANEL)
+        paper_header_wrap.pack(fill="x")
+        paper_header_widgets = []
+        papers_label = tk.Label(paper_header_wrap, text="Papers", bg=PANEL, fg=ACCENT,
+                 font=(FONT_FAMILY, 13, "bold"))
+        paper_header_widgets.append(papers_label)
         self._workspace_btn = tk.Button(
-            paper_header, text="Open Folder",
+            paper_header_wrap, text="Open Folder",
             command=self._on_open_folder,
             bg=BTN, fg=TEXT, activebackground=BTN_HOV, activeforeground=TEXT,
             font=(FONT_FAMILY, 8), relief="flat", padx=6, pady=2,
             cursor="hand2",
         )
-        self._workspace_btn.pack(side="right")
+        paper_header_widgets.append(self._workspace_btn)
         self._scan_btn = tk.Button(
-            paper_header, text="Scan PDFs",
+            paper_header_wrap, text="Scan PDFs",
             command=lambda: self._presenter.scan_workspace_pdfs(),
             bg=BTN, fg=TEXT, activebackground=BTN_HOV, activeforeground=TEXT,
             font=(FONT_FAMILY, 8), relief="flat", padx=6, pady=2,
             cursor="hand2",
         )
-        self._scan_btn.pack(side="right", padx=(0, 4))
+        paper_header_widgets.append(self._scan_btn)
+        self._flow_pack_widgets(paper_header_wrap, paper_header_widgets, gap_x=8)
 
         paper_btn_row = tk.Frame(paper_list_col, bg=PANEL)
         paper_btn_row.pack(fill="x", pady=(0, 6))
@@ -1300,6 +2387,8 @@ class TkApp:
         ctrl_row = tk.Frame(main_col, bg=BG)
         ctrl_row.pack(fill="x")
         self._ctrl_row = ctrl_row
+        ctrl_wrap = tk.Frame(ctrl_row, bg=BG)
+        ctrl_wrap.pack(fill="x")
 
         self._view_var = tk.StringVar(value="body")
         style = ttk.Style()
@@ -1326,40 +2415,21 @@ class TkApp:
             arrowcolor=[("active", MUTED), ("pressed", ACCENT)],
             troughcolor=[("active", PANEL)],
         )
-        def _style_option_menu(menu: tk.OptionMenu):
-            menu.config(
-                bg=PANEL,
-                fg=TEXT,
-                font=(FONT_FAMILY, 9),
-                activebackground=ACCENT,
-                activeforeground=BG,
-                relief="solid",
-                bd=1,
-                highlightthickness=0,
-            )
-            menu["menu"].config(
-                bg=BG,
-                fg=TEXT,
-                font=(FONT_FAMILY, 9),
-                activebackground=ACCENT,
-                activeforeground=BG,
-            )
 
         view_dropdown = tk.OptionMenu(
-            ctrl_row,
+            ctrl_wrap,
             self._view_var,
             "body",
             "appendix",
             "note",
             "description",
         )
-        _style_option_menu(view_dropdown)
-        view_dropdown.pack(side="left")
+        self._style_option_menu(view_dropdown)
         self._view_var.trace_add("write", self._on_view_change)
 
         show_log_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            ctrl_row,
+        show_log_btn = tk.Checkbutton(
+            ctrl_wrap,
             text="show log",
             variable=show_log_var,
             bg=BG,
@@ -1369,17 +2439,17 @@ class TkApp:
             selectcolor=BG,
             font=(FONT_FAMILY, 9),
             command=self._toggle_log,
-        ).pack(side="left", padx=(10, 0))
+        )
 
         self._mini_var = tk.StringVar()
         self._mini_lbl = tk.Label(
-            ctrl_row,
+            ctrl_wrap,
             textvariable=self._mini_var,
             bg=BG,
             fg=MUTED,
             font=(FONT_FAMILY, 10),
         )
-        self._mini_lbl.pack(side="right")
+        self._flow_pack_widgets(ctrl_wrap, [view_dropdown, show_log_btn, self._mini_lbl], gap_x=10)
 
         tk.Frame(main_col, bg=BG, height=4).pack(fill="x")
 
@@ -1403,18 +2473,22 @@ class TkApp:
 
         btn_row = tk.Frame(main_col, bg=BG)
         btn_row.pack(fill="x", side="bottom", pady=(8, 0))
+        btn_wrap = tk.Frame(btn_row, bg=BG)
+        btn_wrap.pack(fill="x")
 
-        self._copy_btn = _FlatButton(btn_row, "Copy", self._on_copy)
-        self._open_btn = _FlatButton(btn_row, "Open Folder", lambda: self._presenter.open_folder())
-        self._pdf_btn = _FlatButton(btn_row, "Open PDF", lambda: self._presenter.open_pdf_in_browser())
-        self._strip_btn = _FlatButton(btn_row, "Strip Comments", lambda: self._presenter.strip_comments())
-
-        for b in (self._copy_btn, self._open_btn, self._pdf_btn, self._strip_btn):
-            b.pack(side="left", padx=(0, 6))
-
+        self._copy_btn = _FlatButton(btn_wrap, "Copy", self._on_copy)
+        self._open_btn = _FlatButton(btn_wrap, "Open Folder", lambda: self._presenter.open_folder())
+        self._pdf_btn = _FlatButton(btn_wrap, "Open PDF", lambda: self._presenter.open_pdf_in_browser())
+        self._strip_btn = _FlatButton(btn_wrap, "Strip Comments", lambda: self._presenter.strip_comments())
         self._toast_var = tk.StringVar()
-        tk.Label(btn_row, textvariable=self._toast_var,
-                 bg=BG, fg=MUTED, font=(FONT_FAMILY, 9)).pack(side="right")
+        toast_label = tk.Label(btn_wrap, textvariable=self._toast_var,
+                 bg=BG, fg=MUTED, font=(FONT_FAMILY, 9))
+
+        self._flow_pack_widgets(
+            btn_wrap,
+            [self._copy_btn, self._open_btn, self._pdf_btn, self._strip_btn, toast_label],
+            gap_x=6,
+        )
 
         tk.Frame(main_col, bg=BG, height=2).pack(fill="x", side="top")
         self._preview_header = tk.Frame(main_col, bg=BG)
@@ -1458,8 +2532,13 @@ class TkApp:
         def _build_side_chat_header(parent):
             controls_row = tk.Frame(parent, bg=PANEL)
             controls_row.pack(fill="x", pady=(0, 10))
-            tk.Checkbutton(
-                controls_row,
+            controls_wrap = tk.Frame(controls_row, bg=PANEL)
+            controls_wrap.pack(fill="x")
+
+            controls_widgets = []
+
+            deep_thinking_btn = tk.Checkbutton(
+                controls_wrap,
                 text="Deep Thinking",
                 variable=self._deep_thinking_enabled,
                 bg=PANEL,
@@ -1468,18 +2547,61 @@ class TkApp:
                 activeforeground=TEXT,
                 selectcolor=BG,
                 font=(FONT_FAMILY, 9),
-            ).pack(side="left", padx=(0, 10))
+            )
+            controls_widgets.append(deep_thinking_btn)
             self._chat_model_var = tk.StringVar(value=self._chat_model)
             model_dropdown = tk.OptionMenu(
-                controls_row,
+                controls_wrap,
                 self._chat_model_var,
                 *self.CHAT_MODELS.keys(),
                 command=self._on_model_change
             )
-            _style_option_menu(model_dropdown)
-            model_dropdown.pack(side="left", padx=(0, 10))
-            tk.Button(
-                controls_row,
+            self._style_option_menu(model_dropdown)
+            controls_widgets.append(model_dropdown)
+            new_btn = tk.Button(
+                controls_wrap,
+                text="New",
+                command=self._new_side_chat_session,
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(new_btn)
+            rename_btn = tk.Button(
+                controls_wrap,
+                text="Rename",
+                command=self._rename_side_chat_session,
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(rename_btn)
+            history_btn = tk.Button(
+                controls_wrap,
+                text="History",
+                command=self._show_side_chat_history,
+                bg=BTN,
+                fg=TEXT,
+                activebackground=BTN_HOV,
+                activeforeground=TEXT,
+                font=(FONT_FAMILY, 9),
+                relief="flat",
+                padx=10,
+                pady=2,
+            )
+            controls_widgets.append(history_btn)
+            token_btn = tk.Button(
+                controls_wrap,
                 text="Update Token",
                 command=self._on_update_token,
                 bg=BTN,
@@ -1490,7 +2612,10 @@ class TkApp:
                 relief="flat",
                 padx=10,
                 pady=2,
-            ).pack(side="left")
+            )
+            controls_widgets.append(token_btn)
+
+            self._flow_pack_widgets(controls_wrap, controls_widgets)
 
         self._chat_panel = self._create_chat_panel(
             chat_col,

@@ -1,5 +1,17 @@
 # ArxivCat CHANGELOG
 
+## v0.7.1 - Chat Persistence & UI Polish
+
+### v0.7.1 更新内容
+
+- Global Chat 新增 `Select Context`，支持按论文切换 `body` / `appendix` / `description` / `note`
+- side chat 与 Global Chat 新增历史会话的自动保存、打开与重命名，并尽量复用已保存的上下文快照
+- workspace 根目录新增 `arxivcat_global_chats`，论文目录新增 `arxiv_chats`，并排除内部目录被误识别为论文
+- 多处 header / toolbar 与 `Send` / `Stop` / `Reset` 按钮行改为自动换行布局
+- 重命名弹窗改为统一主题样式，修复若干 Global Chat 交互与显示问题
+
+---
+
 ## v0.7.0 - Description & Global Chat
 
 ### 更新内容

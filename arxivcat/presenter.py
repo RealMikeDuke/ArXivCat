@@ -26,8 +26,11 @@ from arxivcat.core import (
     sanitize_filename,
 )
 
-VERSION = "v0.7.0"
+VERSION = "v0.7.1"
 AUTHOR = "by MikeDuke"
+WORKSPACE_INTERNAL_DIRS = {
+    "arxivcat_global_chats",
+}
 
 
 def get_cache_dir() -> Path:
@@ -150,6 +153,7 @@ class Presenter:
             return
         self.workspace_path = Path(path)
         self.workspace_path.mkdir(parents=True, exist_ok=True)
+        (self.workspace_path / "arxivcat_global_chats").mkdir(parents=True, exist_ok=True)
         save_workspace_path(str(self.workspace_path))
         self.refresh_paper_list()
         self.ui.set_title(f"ArxivCat — {self.workspace_path.name}")
@@ -164,6 +168,8 @@ class Presenter:
         papers = []
         for folder in sorted(self.workspace_path.iterdir(), key=lambda f: f.name):
             if not folder.is_dir() or folder.name.startswith('.'):
+                continue
+            if folder.name in WORKSPACE_INTERNAL_DIRS:
                 continue
 
             name = folder.name
@@ -357,6 +363,7 @@ class Presenter:
     def _ensure_paper_meta_files(self, paper_dir: Path):
         self._ensure_note_file(paper_dir)
         self._ensure_description_file(paper_dir)
+        (paper_dir / "arxiv_chats").mkdir(parents=True, exist_ok=True)
 
     def _build_paper_description(self, paper_dir: Path, arxiv_id: str, title: str):
         self._ensure_description_file(paper_dir)
