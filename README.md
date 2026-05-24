@@ -14,7 +14,7 @@ The project is meant for a simple workflow: paste an arXiv URL or ID, inspect th
 - **Workspace mode**: open any folder as a workspace (like Obsidian); each subfolder is a paper
 - Remembers last workspace on launch; "Open Folder" to switch anytime
 - **Scan PDFs**: auto-detect arXiv IDs (with version, e.g. `2604.12630v1`) from PDFs in the workspace
-- **Download All**: one-click batch download with progress (`3/10`), resumable
+- **Download All**: concurrent batch download with progress, resumable completion checks, and an interrupt button
 - Automatically downloads the PDF alongside LaTeX source
 - **Open PDF**: view the arXiv PDF in your browser
 - Download source packages from an arXiv URL, PDF URL, or raw arXiv ID
@@ -22,9 +22,12 @@ The project is meant for a simple workflow: paste an arXiv URL or ID, inspect th
 - Recursively expand nested LaTeX `\input` and `\include`
 - Detect the main TeX file automatically
 - Export `body.tex` and `appendix.tex`
+- Automatically generates `description.md` for each paper using a fresh DeepSeek Flash description pass
+- Per-paper workspace files now include `body.tex`, optional `appendix.tex`, `note.txt`, `description.md`, PDF, and a description-ready flag
 - Resizable three-column layout (paper list / preview / chat)
-- Preview and lightly edit extracted text in a Tkinter GUI
-- Lightweight DeepSeek chat panel with streaming output
+- Preview `body`, `appendix`, `note`, and `description` in the Tkinter GUI
+- Lightweight DeepSeek side chat with streaming output
+- Workspace-level **Global Chat** over all current paper descriptions
 
 ## Scope
 
@@ -66,26 +69,46 @@ python cli.py --url https://arxiv.org/pdf/2601.11514
 2. Paste an arXiv URL or ID → click `Run` → paper is downloaded and extracted into the workspace.
 3. Or: drop PDFs into the workspace folder → click `Scan PDFs` → then `Download All`.
 4. Click any paper in the left panel to load it.
-5. Use action buttons: `Copy`, `Overwrite`, `Open Folder`, `Open PDF`, `Strip Comments`.
-6. Use the right-side chat panel for quick summaries or explanations.
+5. Use action buttons: `Copy`, `Open Folder`, `Open PDF`, `Strip Comments`.
+6. Use the `description` view to inspect the generated paper brief.
+7. Use the right-side chat panel for quick questions about the currently loaded paper.
+8. Use `Global Chat` in the left panel to talk over all paper descriptions in the current workspace.
 
-## Chat panel
+## Chat panels
 
-The current chat panel uses `deepseek-v4-flash` with streaming output.
+The desktop app now has two related chat surfaces:
+
+- **Side chat**: scoped to the currently loaded preview text
+- **Global Chat**: scoped to all `description.md` files in the current workspace
+
+Both panels share the same panel structure and support `Flash` / `Pro` model selection plus optional deep thinking.
 
 Features:
+
 - Streaming responses for real-time feedback
 - Deep thinking mode toggle (optional)
 - Stop button to cancel long responses
 - Performance metrics display (TTFT, tokens/sec, token usage)
-- Sends the current preview text as context
+- Side chat sends the current preview text as context
+- Global Chat sends all current numbered paper descriptions as context
 - Keeps short in-memory multi-turn history
 - Clears chat memory when you click `Reset`
-- Works best after a paper has already been loaded into the preview
+- Works best after descriptions have been generated for the workspace papers
+
+## Per-paper workspace files
+
+Each paper subfolder can now contain:
+
+- `body.tex`
+- `appendix.tex` (optional)
+- `note.txt`
+- `description.md`
+- downloaded PDF
+- `.description_ready`
 
 ## Output locations
 
-- workspace: user-selected folder (each paper is a subfolder containing `body.tex`, `appendix.tex`, and the PDF)
+- workspace: user-selected folder (each paper is a subfolder containing extracted TeX, notes, description, readiness flag, and PDF)
 - download cache: `%APPDATA%/ArxivCat/downloads/`
 - config: `%APPDATA%/ArxivCat/config.json`
 

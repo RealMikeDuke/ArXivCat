@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = $PSScriptRoot
 $EntryPoint  = "$ProjectRoot\main.py"
 $ExeName     = "ArxivCat"
-$Version     = "v0.3.0"
+$Version     = "v0.7.0"
 $ReleaseName = "$ExeName-$Version-win64"
 $PythonExe   = "D:\anaconda3\envs\arxivcat\python.exe"
 $EnvRoot     = Split-Path $PythonExe -Parent
@@ -68,6 +68,9 @@ foreach ($path in @($BuildDir, $DistDir, $SpecFile)) {
     --hidden-import arxivcat.ui.tkinter_ui `
     --collect-all requests `
     --collect-all google `
+    --collect-all openai `
+    --collect-all fitz `
+    --collect-all pymupdf `
     --hidden-import tkinter `
     --hidden-import tkinter.ttk `
     $EntryPoint

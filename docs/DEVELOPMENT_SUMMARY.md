@@ -68,7 +68,6 @@
 ArxivCat/
 ├── web/                          # Web 版本
 │   ├── app.py                    # Flask 后端
-│   ├── test_server.py            # 测试脚本
 │   ├── static/
 │   │   ├── css/
 │   │   │   └── style.css         # 样式（505 行）
@@ -82,6 +81,9 @@ ArxivCat/
 │   ├── templates/
 │   │   └── index.html            # 主页面（113 行）
 │   └── README.md                 # Web 版文档
+├── testground/
+│   └── web/
+│       └── test_server.py        # 测试脚本
 ├── run-web.ps1                   # 启动脚本
 ├── requirements-web.txt          # Web 版依赖
 ├── QUICKSTART_WEB.md             # 快速启动指南

@@ -1,6 +1,24 @@
-# ArxivCat v0.6.0 - Workspace 模式 & PDF 批量扫描
+# ArxivCat CHANGELOG
 
-## 更新内容
+## v0.7.0 - Description & Global Chat
+
+### 更新内容
+
+- 新增标准论文文件 `description.md`，在单篇下载和 `Download All` 中自动生成
+- 新增 `.description_ready` 完成标记，用于识别中途中断导致的不完整 description
+- 预览下拉框新增 `description` 视图，可直接查看 `description.md`
+- 新增 **Global Chat**，基于当前 workspace 全部论文的 `description.md` 做多轮问答
+- Global Chat 与右侧 side chat 共享同一套 chat panel 抽象与交互结构
+- Global Chat 现已支持 `Flash` / `Pro` 模型切换与 `Deep Thinking`
+- **Download All** 改为并发处理，并支持中断按钮
+- `Download All` 现在会补全缺失 description 的论文，不再只检查 `body.tex`
+- 更新 README、README_zh、tech memo 与打包版本号到 `v0.7.0`
+
+---
+
+## v0.6.0 - Workspace 模式 & PDF 批量扫描
+
+### v0.6.0 更新内容
 
 - **Workspace 模式**：以文件夹为工作区（类似 Obsidian），每个子文件夹对应一篇论文
 - 启动时自动恢复上次打开的 workspace，首次运行弹出文件夹选择器
@@ -14,9 +32,9 @@
 
 ---
 
-# ArxivCat v0.5.0 - 论文历史列表 & 无限缓存
+## v0.5.0 - 论文历史列表 & 无限缓存
 
-## 更新内容
+### v0.5.0 更新内容
 
 - 新增左侧论文历史列表，显示所有已下载论文，点击即可快速加载
 - 移除 50MB 缓存上限，改为无限缓存
@@ -27,9 +45,9 @@
 
 ---
 
-# ArxivCat v0.4.0 - Web 版本
+## v0.4.0 - Web 版本
 
-## 更新内容
+### v0.4.0 更新内容
 
 - 新增 Web 版本，支持跨平台使用（Windows、macOS、Linux、Android、iOS）
 - PWA 支持，可安装到主屏幕
@@ -48,7 +66,7 @@ python main.py
 
 ## 文件结构
 
-```
+```text
 ArxivCat/
 ├── web/                    # Web 版本
 │   ├── app.py              # Flask 后端

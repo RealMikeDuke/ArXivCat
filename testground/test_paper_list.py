@@ -14,6 +14,7 @@ class FakeUI:
     def set_preview(self, content, label): print(f"  [preview] {label}: {len(content)} chars")
     def set_buttons_enabled(self, enabled): pass
     def set_run_busy(self, busy): pass
+    def set_paper_actions_busy(self, busy): pass
     def show_toast(self, msg, duration_ms=2000): pass
     def get_url_input(self): return ""
     def get_view_mode(self): return "body"
@@ -21,6 +22,9 @@ class FakeUI:
     def clear_log(self): self.logs.clear()
     def set_url_input(self, url): print(f"  [url] {url}")
     def set_paper_list(self, papers): pass
+    def set_title(self, title): pass
+    def build_paper_description(self, paper_dir, arxiv_id, title): pass
+    def set_download_all_state(self, interrupt_mode): pass
     def run(self): pass
 
 

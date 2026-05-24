@@ -22,11 +22,15 @@ class UIProtocol(Protocol):
         ...
 
     def set_buttons_enabled(self, enabled: bool) -> None:
-        """Enable / disable the action buttons (Copy, Overwrite, …)."""
+        """Enable / disable the action buttons."""
         ...
 
     def set_run_busy(self, busy: bool) -> None:
         """Toggle the Run button between ready and busy states."""
+        ...
+
+    def set_paper_actions_busy(self, busy: bool) -> None:
+        """Enable / disable paper list action buttons during background work."""
         ...
 
     def show_toast(self, msg: str, duration_ms: int = 2000) -> None:
@@ -38,7 +42,7 @@ class UIProtocol(Protocol):
         ...
 
     def get_view_mode(self) -> str:
-        """Return current dropdown selection: 'body' or 'appendix'."""
+        """Return current dropdown selection: 'body', 'appendix', or 'note'."""
         ...
 
     def get_preview_text(self) -> str:
@@ -59,6 +63,12 @@ class UIProtocol(Protocol):
 
     def set_title(self, title: str) -> None:
         """Set the window title."""
+        ...
+
+    def build_paper_description(self, paper_dir: str, arxiv_id: str, title: str) -> None:
+        ...
+
+    def set_download_all_state(self, interrupt_mode: bool) -> None:
         ...
 
     def run(self) -> None:
