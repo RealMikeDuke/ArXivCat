@@ -27,11 +27,14 @@ Lightweight chat panels exist as reading assistance, not as full retrieval or ag
 ## 2. Current top-level files
 
 - `main.py`: GUI entry point
-- `cli.py`: command-line entry point
+- `cli.py`: command-line entry point (argparse subcommands: `workspace`, `paper`, `chat`, `token`)
+- `test_cli.py`: CLI test suite
 - `arxivcat/core.py`: download and extraction logic
-- `arxivcat/presenter.py`: UI-agnostic application logic
-- `arxivcat/ui/tkinter_ui.py`: current GUI implementation
-- `arxivcat/ui/base.py`: UI protocol
+- `arxivcat/presenter.py`: UI-agnostic application logic (Presenter pattern)
+- `arxivcat/chat_service.py`: chat logic (DeepSeek API, session persistence, description generation)
+- `arxivcat/ui/tkinter_ui.py`: current GUI implementation (~2600 lines)
+- `arxivcat/ui/cli_ui.py`: CLI UI implementation (implements UIProtocol for colored terminal output)
+- `arxivcat/ui/base.py`: UI protocol (abstract interface between UI and Presenter)
 - `build.ps1`: Windows packaging script
 - `pyi_rth_tk_env.py`: runtime hook for packaged Tk/Tcl environment setup
 - `requirements.txt`: desktop dependencies
@@ -53,22 +56,52 @@ The goal here is not heavy abstraction. It is just enough separation so extracti
 
 ### 3.2 Extraction logic
 
-Most of the paper-processing logic lives in `arxivcat/core.py`.
+Most of the paper-processing logic lives in `arxivcat/core.py`. Key functions and their responsibilities:
 
-Important responsibilities include:
+| Function | Responsibility |
+|---|---|
+| `extract_arxiv_id(input_str)` | Parse arXiv ID from URL, raw ID, or versioned ID |
+| `extract_arxiv_id_from_pdf(pdf_path)` | Extract arXiv ID from PDF metadata using PyMuPDF |
+| `fetch_title_from_arxiv(arxiv_id)` | Scrape paper title from arXiv abstract page |
+| `download_source(arxiv_id, downloads_dir)` | Download source tarball from `arxiv.org/src/`, verify cache integrity |
+| `download_pdf(arxiv_id, output_dir)` | Download PDF from `arxiv.org/pdf/` |
+| `find_main_tex(paper_dir)` | Locate the `.tex` file containing `\documentclass` |
+| `expand_inputs(tex_content, base_dir)` | Recursively expand `\input`/`\include` directives, with cycle detection |
+| `extract_body_and_appendix(tex_content)` | Heuristically split expanded text into `(body, appendix, error)` |
+| `extract_body_from_dir(paper_dir, ...)` | Top-level orchestrator: find main → expand → validate → split → write |
 
-- parsing arXiv IDs from different input forms
-- extracting arXiv IDs from local PDFs with PyMuPDF
-- fetching paper titles from arXiv pages
-- downloading arXiv source packages
-- downloading PDFs
-- handling partially broken cache states
-- checking for unsafe tar paths before extraction
-- finding the main TeX file
-- recursively expanding `\input` and `\include`
-- heuristically splitting body vs appendix
+**arXiv ID parsing** (`extract_arxiv_id`): Uses regex `(\d+[._]\d+(?:v\d+)?)`. After matching, `_` in the captured group is replaced with `.`. Returns `None` if no match.
 
-This logic is heuristic by design. It is meant to be practical on common arXiv papers, not mathematically complete for all LaTeX projects.
+**PDF ID extraction** (`extract_arxiv_id_from_pdf`): Three strategies tried in order:
+1. PDF metadata (`subject`, `keywords`, `title`, `author` fields) — bare pattern `\d{4}\.\d{4,5}(?:v\d+)?`
+2. First page text — tries `arXiv:\s*(\d{4}\.\d{4,5}(?:v\d+)?)` first, then bare pattern
+3. First 3 pages — tries `arXiv:` prefix pattern on each page
+Returns `None` if PyMuPDF unavailable, PDF unreadable, or no match.
+
+**Title fetching** (`fetch_title_from_arxiv`): GET `arxiv.org/abs/{id}`, extracts `<meta property="og:title" content="..."` with 15s timeout.
+
+**Main TeX detection** (`find_main_tex`):
+1. If `main.tex` exists at root level, return it immediately.
+2. Otherwise iterate top-level `*.tex` files (non-recursive), return the first one containing `\documentclass` in its content.
+3. Return `None` if nothing found.
+
+**Input expansion** (`expand_inputs`): Recursively resolves `\input{...}` and `\include{...}` via regex `\\(?:input|include)\s*\{([^}]+)\}`. Resolution tries: `base_dir/name`, `root_dir/name`, and appending `.tex` if missing. Cycle prevention: a `_seen` set tracks all expanded file paths; re-encountered files are left as-is in output. After expansion, `extract_body_from_dir` re-validates that no unresolved `\input{...}` or `\include{...}` remain — aborts if any are found.
+
+**Cache validation** (in `download_source`): When cache exists, checks 4 conditions:
+1. `find_main_tex()` returns a file
+2. `_can_walk_dir()` — `rglob("*")` succeeds
+3. `_can_read_tex_files()` — all `*.tex` files readable as UTF-8
+4. `_all_inputs_readable()` — all input/include references resolvable and readable
+Failing cache gets `_repair_permissions()` (chmod 777/666 on all files), re-checked. If still bad, `shutil.rmtree` + re-download. Windows file locks during deletion fall back to `_fresh1`, `_fresh2`, etc. suffixes on the folder name.
+
+Body/appendix split uses these heuristic markers in order:
+1. Body starts at `\begin{abstract}`, first `\section`, or `\begin{document}` (whichever comes first)
+2. Split point is the earliest of: `\appendix`, `\begin{appendix}`, or `\bibliography{...}`/`\bibliographystyle{...}` — whichever appears after the body start. If none found, falls back to the last section matching "Conclusion"/"Summary", or `\end{document}`
+3. Appendix text has `\bibliography{...}` and `\clearpage` cleaned out. Appendices shorter than 50 chars are treated as non-existent
+
+**Tar safety**: `_is_safe_tar_member()` resolves the target dir and each member's extraction path; returns `True` only if the resolved member path is the target dir or a descendant (prevents `..` path traversal). Suspicious members are skipped with a warning.
+
+All extraction logic is heuristic by design — practical on common arXiv papers, not mathematically complete for all LaTeX projects.
 
 ### 3.3 GUI logic
 
@@ -94,12 +127,44 @@ The chat panel currently keeps short-lived in-memory history only.
 
 ### 3.4 Workspace logic
 
-The desktop app now treats a user-selected folder as the workspace.
+The desktop app treats a user-selected folder as the workspace. All workspace state and orchestration lives in the `Presenter` class.
 
-The key state lives in `Presenter`:
-
+**Presenter key state:**
 - `workspace_path`: selected workspace folder
 - `output_dir`: currently loaded paper folder
+- `_task_busy`: mutex-guarded flag preventing concurrent operations
+- `_download_all_cancelled`: cancellation flag for batch download
+
+**Concurrency model:**
+- Single-operation flows (`run_fetch`, `scan_workspace_pdfs`) spawn a `threading.Thread` daemon
+- Batch `Download All` uses `ThreadPoolExecutor(max_workers=25)` with `as_completed()` for progress
+- Cancellation: an atomic `_download_all_cancelled` flag is checked at multiple points inside each worker; remaining queued futures are `.cancel()`'d. In-flight workers complete their current step then return early
+- All worker-to-UI communication goes through `UIProtocol` methods
+
+**`_emit_log()` status mapping:**
+Calls from `core.py` log functions are forwarded to `ui.add_log()`. Additionally, specific substrings trigger `ui.set_mini_status()` updates:
+- `"Downloading"` + `"%"` → `"downloading..."`
+- `"Download complete"` → `"downloaded"`
+- `"Extracting"` → `"extracting..."`
+- `"Expanding"` → `"expanding..."`
+- `"Parsing body"` → `"parsing..."`
+- `"Already cached"` → `"cached"`
+- `"[OK]"` + `"saved"` → `"done"`
+
+**Paper list construction** (`get_paper_list()`): Iterates workspace subdirectories, skipping hidden dirs (`.`-prefixed) and internal dirs (`arxivcat_global_chats`). Parses folder name `{id_part1}_{id_part2}_{title...}` to extract arXiv ID (with `.` separator) and title. Checks paper status:
+- `has_body = (body.tex exists)`
+- `description_ready = (description.md non-empty AND .description_ready exists)`
+- `is_complete = has_body AND description_ready`
+
+**`_process_pending_paper()`** (single paper unit for batch download): Two paths:
+- Paper has body but missing description → only rebuilds description
+- Paper needs full download → `download_source` → `extract_body_from_dir` → `download_pdf` → meta files → build description
+Checks cancellation flag before each major step.
+
+**Workspace initialization** (`open_workspace`):
+- Saves path to `%APPDATA%/ArxivCat/config.json` (key: `workspace_path`)
+- Creates workspace dir and `arxivcat_global_chats/` subdirectory
+- Refreshes paper list and updates window title
 
 Workspace behavior:
 
@@ -113,7 +178,11 @@ Workspace behavior:
 
 `Scan PDFs` only scans PDF files directly under the workspace root. For each PDF, it tries to extract an arXiv ID and then creates a pending paper folder if that base ID is not already present.
 
-`Download All` now processes incomplete paper folders with a thread pool. It can either download and extract a missing paper or only rebuild `description.md` if the body already exists. The UI refreshes the paper list incrementally so interrupted runs still leave visible progress.
+`Download All` processes incomplete paper folders with a `ThreadPoolExecutor(max_workers=25)`. Each worker calls `_process_pending_paper()`: download source → extract → download PDF → write meta files → build description. The UI refreshes the paper list incrementally. Interrupt is supported via a cancel flag checked before each submission and propagated to queued futures.
+
+Two special directories under the workspace are excluded from paper recognition:
+- `arxivcat_global_chats/` — stores Global Chat session JSONs
+- `arxiv_chats/` — stores per-paper side chat session JSONs (one per paper folder)
 
 The current desktop flow treats a paper as fully ready only when both of these are true:
 
@@ -135,7 +204,52 @@ Current behavior in `web/app.py`:
 - source cache is `%APPDATA%/ArxivCat/downloads/`
 - Web extraction output is `%APPDATA%/ArxivCat/outputs/`
 
-The Web version does not currently use the desktop workspace folder model.
+### 3.6 CLI version
+
+`cli.py` provides a full command-line alternative with argparse subcommands:
+
+| Group | Subcommand | Purpose |
+|---|---|---|
+| `workspace` | `open` | Set and cache workspace path |
+| `workspace` | `scan` | Scan workspace for PDFs, create paper folders |
+| `paper` | `list` / `download` / `download-all` | Manage papers |
+| `paper` | `preview` / `note` / `strip` / `open` / `pdf` / `info` | View and edit paper content |
+| `chat` | `side` | Interactive chat scoped to one paper |
+| `chat` | `global` | Interactive chat over all workspace descriptions |
+| `token` | `status` / `set` / `validate` | Manage DeepSeek API token |
+
+The CLI reuses `Presenter` and `ChatService` directly, with `CliUI` (in `arxivcat/ui/cli_ui.py`) implementing `UIProtocol` for colored terminal output.
+
+**CLI chat loops** (`cli.py`):
+- Side chat (`chat side <id>`): Interactive REPL with commands `/quit`, `/model <Flash|Pro>`, `/thinking` (toggle), `/context [field]` (toggle body/appendix/description/note), `/save`, `/load`, `/history`, `/clear`, `/help`. Context is built from the paper folder's `body.tex`/`appendix.tex`/`description.md`/`note.txt` based on toggled fields. Sessions auto-saved under `<paper_dir>/arxiv_chats/`.
+- Global chat (`chat global`): Same REPL, scoped to all workspace papers. Builds context from `description.md` by default. Sessions saved under `<workspace>/arxivcat_global_chats/`.
+- Both use `ChatService.stream_chat()` with `include_thinking=True`, exposing the cancel via SIGINT. System prompts differ: side chat emphasizes paper-level Q&A with arXiv ID attribution; global chat treats papers as numbered entries.
+
+### 3.7 UIProtocol reference
+
+`UIProtocol` (in `arxivcat/ui/base.py`) is a `typing.Protocol` decorated with `@runtime_checkable`. Every UI backend must implement this interface. The `Presenter` calls these methods to update any UI without knowing which implementation is active:
+
+| Method | Purpose |
+|---|---|
+| `add_log(msg)` | Append a log line. `[OK]`/`[ERROR]`/`[INFO]` prefix controls color |
+| `set_mini_status(msg, level)` | Update small inline status; levels: `info`, `ok`, `error` |
+| `set_preview(content, label)` | Replace main preview text area |
+| `set_buttons_enabled(enabled)` | Enable/disable action buttons (copy, open, etc.) |
+| `set_run_busy(busy)` | Toggle Run button between ready/busy states |
+| `set_paper_actions_busy(busy)` | Disable paper list actions during background work |
+| `show_toast(msg, duration_ms)` | Transient status message that auto-clears |
+| `get_url_input()` | Return current arXiv URL/ID from input field |
+| `get_view_mode()` | Return dropdown: `"body"`, `"appendix"`, `"note"`, `"description"` |
+| `get_preview_text()` | Return current preview area text (for strip comments) |
+| `clear_log()` | Clear all log entries |
+| `set_url_input(url)` | Set arXiv URL/ID input field value |
+| `set_paper_list(papers)` | Update left panel paper list (list of dicts with: `arxiv_id`, `title`, `folder_name`, `has_body`, `description_ready`, `is_complete`) |
+| `set_title(title)` | Set window title |
+| `build_paper_description(paper_dir, arxiv_id, title)` | Trigger description generation (delegates to `ChatService`) |
+| `set_download_all_state(interrupt_mode)` | Update Download All button between idle/interrupt states |
+| `run()` | Start UI event loop (blocking call) |
+
+Tkinter UI: implements all methods, using `root.after()` for thread-safe marshalling. CLI UI: implements most as terminal output; `build_paper_description`, `get_preview_text`, `set_buttons_enabled`, etc. are no-ops or unsupported in CLI context.
 
 ## 4. Chat implementation notes
 
@@ -143,7 +257,7 @@ The chat panels are intentionally lightweight.
 
 ### 4.1 Desktop chat
 
-The desktop chat lives in `arxivcat/ui/tkinter_ui.py`.
+Desktop chat logic lives in `arxivcat/chat_service.py` (the `ChatService` class), separate from the UI layer.
 
 Current behavior:
 
@@ -155,11 +269,13 @@ Current behavior:
 - model preference is saved as `chat_model` in the same config file
 - sends the current preview text as context, truncated to about 12000 characters
 - includes the recent in-memory chat history, currently the last 12 entries
-- supports streaming output
-- supports a stop button by cancelling the local stream loop
+- `stream_chat()` handles streaming output, calling `on_token` / `on_status` / `on_complete` callbacks
+- supports a stop button by setting an internal cancel flag checked in the stream loop
 - optionally sends DeepSeek thinking parameters when deep thinking is enabled
 - shows rough performance metrics such as TTFT, tokens/sec, and estimated token counts
 - `Reset` clears the in-memory history
+
+**Session persistence:** Chat sessions are saved automatically as JSON files. Side chat sessions go under `<paper_dir>/arxiv_chats/`, Global Chat sessions under `<workspace>/arxivcat_global_chats/`. Each session is named `YYYYMMDD_HHMMSS.json` (with numeric suffix on conflict). Sessions store: `title`, `kind`, `model`, `deep_thinking`, `messages`, `context_selection`, `context_snapshot`, `view_name`, `updated_at`. The `ChatService` (via module-level helpers `save_chat_session`, `load_chat_session`, `list_chat_sessions`, `rename_chat_session`, `delete_chat_session`) manages the full CRUD cycle.
 
 The desktop GUI now has two chat surfaces built from the same chat-panel abstraction:
 
@@ -167,6 +283,23 @@ The desktop GUI now has two chat surfaces built from the same chat-panel abstrac
 - Global Chat: scoped to all numbered `description.md` files in the workspace
 
 Global Chat uses the same visual structure and the same `Flash` / `Pro` model controls plus deep thinking toggle. Its difference is the context source, not the widget structure.
+
+**Context building:** Two module-level functions construct chat context:
+
+- `build_side_chat_context(paper_dir, selection)` — reads `body.tex`, `appendix.tex`, `description.md`, `note.txt` from the paper folder based on which fields are `True` in the `selection` dict `{"body": bool, "appendix": bool, "description": bool, "note": bool}`
+- `build_description_context(entries, selection)` — for Global Chat; iterates all workspace papers, prepends arXiv ID and title, wraps each paper's enabled fields in numbered `"Paper [1]\n---\n..."` blocks
+
+**Selection delta tracking:** Chat panels remember which context sections were sent in the last API call (`last_sent`). `compute_selection_delta(current, last_sent)` returns newly-enabled fields. When the user toggles a context checkbox mid-conversation, newly added content is injected as a system message before the next user message, so the model sees it without losing conversation continuity. Same pattern applies for global chat via `compute_global_selection_delta()`.
+
+**Streaming (`ChatService.stream_chat`):**
+- Runs in a daemon thread so the UI stays responsive
+- Open streaming: `client.chat.completions.create(stream=True)`
+- Checks `_cancelled` flag at the top of each chunk iteration
+- Collapses multiple consecutive newlines into a single `\n` in each token for cleaner display
+- On cancellation: calls `on_status("cancelled")`, no completion callback
+- On success: calls `on_status(model)`, then `on_complete(full_text.strip())`
+- Deep thinking: sends `extra_body={"thinking": {"type": "enabled"}}` and `reasoning_effort="high"`
+- Metrics: reports TTFT (ms), tokens/sec, prompt_tokens, completion_tokens via `on_status`
 
 ### 4.2 Web chat
 
@@ -192,13 +325,22 @@ So if someone wants better paper QA in the future, the likely next step is chunk
 
 ### 4.3 Description generation
 
-Desktop description generation also lives in `arxivcat/ui/tkinter_ui.py` and is invoked from `Presenter`.
+Description generation lives in `arxivcat/chat_service.py` (`ChatService.build_description()`) and is invoked from `Presenter`.
 
 Current behavior:
 
-- uses a fresh DeepSeek chat completion rather than reusing side-chat history
-- currently forces `deepseek-v4-flash`
-- reads `body.tex` and optional `appendix.tex`
+- uses a fresh DeepSeek chat completion, not reusing side-chat history
+- forces `deepseek-v4-flash`, `max_tokens=1400`
+- reads `body.tex` (first 14000 chars) and optional `appendix.tex` (first 4000 chars)
+- system prompt instructs the model to produce structured markdown with these sections:
+  - `# Overview`
+  - `## Problem`
+  - `## Method`
+  - `## Key Contributions`
+  - `## Technical Details`
+  - `## Search Tags`
+  - `## Good Match Queries`
+- user prompt includes the arXiv ID, title, and the extracted text snippet
 - writes structured markdown into `description.md`
 - writes `.description_ready` only after the description content is fully written
 - is triggered during single-paper download and batch `Download All`
@@ -268,14 +410,26 @@ Desktop:
 - config: `%APPDATA%/ArxivCat/config.json`
 - source cache: `%APPDATA%/ArxivCat/downloads/`
 - workspace: user-selected folder
-- paper output: one subfolder per paper inside the workspace
-- per-paper files usually include `body.tex`, optional `appendix.tex`, `note.txt`, `description.md`, `.description_ready`, and the downloaded PDF
 
-Desktop config keys currently include:
+**Per-paper folder structure** (under workspace):
+```
+<arXivID>_<SanitizedTitle>/
+  body.tex             # Extracted main text (always present for a complete paper)
+  appendix.tex          # Optional appendix text (>50 chars)
+  description.md        # AI-generated structured summary
+  .description_ready    # Flag file (content: "ok\n"), marks complete description
+  note.txt              # User's own notes
+  <arXivID>.pdf         # Downloaded PDF (optional)
+  arxiv_chats/          # Side chat session JSONs (YYYYMMDD_HHMMSS.json)
+```
+Plus at workspace root: `arxivcat_global_chats/` for Global Chat sessions.
 
-- `deepseek_api_key`
-- `chat_model`
-- `workspace_path`
+**Config keys** in `config.json`:
+- `deepseek_api_key` — DeepSeek API token
+- `chat_model` — `"Flash"` or `"Pro"`
+- `workspace_path` — last opened workspace folder path
+
+**Config I/O helpers** (in `presenter.py`): `load_cached_token()`, `save_token()`, `save_model_preference()`, `load_model_preference()`, `save_workspace_path()`, `load_workspace_path()` — read/write individual keys, creating the file and parent directories on first write. No special encoding, plain `json.dump`/`json.load`.
 
 Web:
 

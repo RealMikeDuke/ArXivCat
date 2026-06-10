@@ -18,8 +18,8 @@ def _log(log: LogFn | None, msg: str) -> None:
 
 
 def extract_arxiv_id(input_str):
-    match = re.search(r'(\d+\.\d+(?:v\d+)?)', input_str)
-    return match.group(1) if match else None
+    match = re.search(r'(\d+[._]\d+(?:v\d+)?)', input_str)
+    return match.group(1).replace('_', '.') if match else None
 
 
 def extract_arxiv_id_from_pdf(pdf_path, log: LogFn | None = None):
