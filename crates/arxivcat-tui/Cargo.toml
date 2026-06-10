@@ -12,6 +12,6 @@ path = "src/main.rs"
 arxivcat-core = { path = "../arxivcat-core" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
-tui-textarea = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
+open = "5"
