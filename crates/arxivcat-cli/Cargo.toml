@@ -1,0 +1,21 @@
+[package]
+name = "arxivcat-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for ArxivCat - agent/script friendly"
+
+[[bin]]
+name = "arxivcat"
+path = "src/main.rs"
+
+[dependencies]
+arxivcat-core = { path = "../arxivcat-core" }
+clap = { workspace = true }
+owo-colors = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+regex = { workspace = true }
+open = "5"
+reqwest = { workspace = true }
+glob = { workspace = true }

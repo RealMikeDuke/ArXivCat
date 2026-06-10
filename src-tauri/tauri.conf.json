@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/tauri/tauri-v2.0.0/crates/tauri-cli/schema.json",
+  "productName": "ArxivCat",
+  "version": "0.1.0",
+  "identifier": "com.mikeduke.arxivcat",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "ArxivCat",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "arxivcat-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri 2 GUI for ArxivCat"
+
+[dependencies]
+arxivcat-core = { path = "../crates/arxivcat-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }
+open = "5"
+glob = { workspace = true }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lib]
+name = "arxivcat_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

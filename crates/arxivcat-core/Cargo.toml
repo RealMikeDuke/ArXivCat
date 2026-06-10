@@ -1,0 +1,24 @@
+[package]
+name = "arxivcat-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core library for ArxivCat - arXiv paper extraction, workspace management, and chat"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+dirs = { workspace = true }
+lopdf = { workspace = true }
+uuid = { workspace = true }
+glob = { workspace = true }
+futures-util = { workspace = true }

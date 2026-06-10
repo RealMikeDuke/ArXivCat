@@ -1,7 +1,31 @@
-downloads/
-outputs/
+# Rust
+target/
+
+# Node / Frontend
+node_modules/
+dist/
+
+# Python (legacy)
 __pycache__/
 *.pyc
-build/
-dist/
 *.spec
+
+# Build artifacts
+*.exe
+*.msi
+*.apk
+*.aab
+
+# Config with secrets
+config.json
+
+# Test data
+tests/_data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

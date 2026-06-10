@@ -1,0 +1,17 @@
+[package]
+name = "arxivcat-tui"
+version = "0.1.0"
+edition = "2021"
+description = "TUI for ArxivCat - terminal interface"
+
+[[bin]]
+name = "arxivcat-tui"
+path = "src/main.rs"
+
+[dependencies]
+arxivcat-core = { path = "../arxivcat-core" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tui-textarea = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }

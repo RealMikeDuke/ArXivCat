@@ -1,0 +1,102 @@
+use std::path::Path;
+
+use crate::config;
+use crate::error::{ArxivError, Result};
+
+const SYSTEM_PROMPT: &str = "You write structured markdown briefs for arXiv papers. The brief will later be used for semantic paper search inside a local workspace. Be detailed but compact, faithful to the provided paper text, and emphasize searchable technical concepts. Output markdown only. Use these sections exactly: # Overview, ## Problem, ## Method, ## Key Contributions, ## Technical Details, ## Search Tags, ## Good Match Queries.";
+
+pub async fn build_description(
+    paper_dir: &Path,
+    arxiv_id: &str,
+    title: &str,
+    log_cb: Option<&dyn Fn(&str)>,
+) -> Result<()> {
+    let api_key = config::load_cached_token().ok_or_else(|| {
+        ArxivError::Config("no DeepSeek API key configured".into())
+    })?;
+
+    let body_path = paper_dir.join("body.tex");
+    let appendix_path = paper_dir.join("appendix.tex");
+    let desc_path = paper_dir.join("description.md");
+    let flag_path = paper_dir.join(".description_ready");
+
+    let mut context = String::new();
+
+    if body_path.exists() {
+        let body = std::fs::read_to_string(&body_path)?;
+        let chunk = if body.len() > 14000 {
+            &body[..14000]
+        } else {
+            &body
+        };
+        context.push_str(chunk);
+    }
+
+    if appendix_path.exists() {
+        let appendix = std::fs::read_to_string(&appendix_path)?;
+        let chunk = if appendix.len() > 4000 {
+            &appendix[..4000]
+        } else {
+            &appendix
+        };
+        context.push_str("\n\n[Appendix]\n");
+        context.push_str(chunk);
+    }
+
+    if context.trim().is_empty() {
+        return Err(ArxivError::Extraction("paper text is empty".into()));
+    }
+
+    let user_msg = format!(
+        "arXiv ID: {arxiv_id}\nTitle: {title}\n\nPaper text snippet:\n{context}"
+    );
+
+    let body = serde_json::json!({
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg}
+        ],
+        "max_tokens": 1400,
+        "stream": false,
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.deepseek.com/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ArxivError::Chat(format!("description API request failed: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(ArxivError::Chat(format!("description API error {status}: {text}")));
+    }
+
+    let json: serde_json::Value = response.json().await.map_err(|e| {
+        ArxivError::Chat(format!("failed to parse description response: {e}"))
+    })?;
+
+    let description = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    if description.is_empty() {
+        return Err(ArxivError::Chat("empty description response".into()));
+    }
+
+    let _ = std::fs::remove_file(&flag_path);
+    std::fs::write(&desc_path, &description)?;
+    std::fs::write(&flag_path, "ok\n")?;
+
+    if let Some(cb) = log_cb {
+        cb(&format!("description generated for {arxiv_id} ({})", desc_path.display()));
+    }
+
+    Ok(())
+}
