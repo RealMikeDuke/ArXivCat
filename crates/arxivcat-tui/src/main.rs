@@ -539,8 +539,10 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
             let m2 = app.screen_map.get((ey + app.preview_scroll) as usize).copied().unwrap_or((0, 0));
             let l1 = content.lines().nth(m1.0).unwrap_or("");
             let l2 = content.lines().nth(m2.0).unwrap_or("");
-            let c1 = l1.char_indices().nth(sx.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(0);
-            let c2 = l2.char_indices().nth(ex.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(l2.len());
+            let v1 = &l1[m1.1.min(l1.len())..];
+            let v2 = &l2[m2.1.min(l2.len())..];
+            let c1 = v1.char_indices().nth(sx.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(0);
+            let c2 = v2.char_indices().nth(ex.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(v2.len());
             (m1.0, m1.1 + c1, m2.0, m2.1 + c2)
         } else { (0, 0, 0, 0) };
 

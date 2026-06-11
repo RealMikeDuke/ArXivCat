@@ -237,8 +237,9 @@ impl App {
             let idx = sy + self.preview_scroll as usize;
             let (li, off) = self.screen_map.get(idx).copied().unwrap_or((0, 0));
             let line = logical.get(li).copied().unwrap_or("");
+            let visible = &line[off.min(line.len())..];
             let ci = sx.saturating_sub(1);
-            let cb = line.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(line.len());
+            let cb = visible.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(visible.len());
             (li, off + cb)
         };
         let (li1, b1) = map(sy, sx);
@@ -267,10 +268,11 @@ impl App {
         let text = self.current_text();
         let logical: Vec<&str> = text.lines().collect();
         let line = logical.get(li)?;
-        let char_idx = (screen_x as usize).saturating_sub(1);
-        let col_offset = line.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(line.len());
+        let visible = &line[off.min(line.len())..];
+        let ci = (screen_x as usize).saturating_sub(1);
+        let col_byte = visible.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(visible.len());
         let line_start: usize = logical.iter().take(li).map(|l| l.len() + 1).sum();
-        Some(line_start + off + col_offset)
+        Some(line_start + off + col_byte)
     }
 
     pub fn build_screen_map(&mut self, line_width: u16) {
