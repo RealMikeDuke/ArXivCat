@@ -138,6 +138,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                 if idx < app.papers.len() {
                     app.paper_list_selected = idx;
                     app.load_paper(idx);
+                    app.show_chat = true;
                 }
             } else if in_rect(rects.preview_tabs, col, row) {
                 let rel_col = col.saturating_sub(rects.preview_tabs.x);
@@ -408,6 +409,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                 if !app.papers.is_empty() {
                     let idx = app.paper_list_selected;
                     app.load_paper(idx);
+                    app.show_chat = true;
                 }
             }
             KeyCode::Char('1') => app.view_mode = ViewMode::Body,
@@ -570,7 +572,9 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
                 "·"
             };
             let is_selected = i == app.paper_list_selected;
-            let is_hovered = app.mouse_row as usize == area.y as usize + 1 + i;
+            let is_hovered = app.mouse_row as usize == area.y as usize + 1 + i
+                && app.mouse_col >= area.x
+                && app.mouse_col < area.x + area.width;
 
             let style = if is_selected {
                 Style::default()
@@ -604,6 +608,84 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_preview(f: &mut Frame, app: &App, area: Rect, tab_area: Rect) {
+    use ratatui::text::{Line, Span};
+
+    let text = if app.current_paper.is_some() {
+        app.current_text()
+    } else {
+        "← Click a paper or press Enter to load"
+    };
+
+    let content = if text.is_empty() { "(empty)" } else { text };
+
+    let styled_text: ratatui::text::Text = if app.selecting
+        && app.sel_start.is_some()
+        && app.current_paper.is_some()
+        && !text.is_empty()
+    {
+        let (sx, sy) = app.sel_start.unwrap();
+        let (ex, ey) = app.sel_end.unwrap_or((sx, sy));
+        let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) {
+            (sx as usize, sy as usize, ex as usize, ey as usize)
+        } else {
+            (ex as usize, ey as usize, sx as usize, sy as usize)
+        };
+
+        let raw_lines: Vec<&str> = content.lines().collect();
+        let normal_style = Style::default().fg(Color::Rgb(205, 214, 244));
+        let sel_style = Style::default()
+            .fg(Color::Rgb(205, 214, 244))
+            .bg(Color::Rgb(69, 71, 90));
+
+        let styled_lines: Vec<Line> = raw_lines
+            .iter()
+            .enumerate()
+            .map(|(li, line)| {
+                if li < y1 || li > y2 {
+                    return Line::from(Span::styled(line.to_string(), normal_style));
+                }
+                let sc = if li == y1 { x1 } else { 0 };
+                let ec = if li == y2 { x2 } else { line.len() };
+                let s = sc.min(line.len());
+                let e = ec.min(line.len());
+                let mut spans: Vec<Span> = Vec::new();
+                if s > 0 {
+                    spans.push(Span::styled(line[..s].to_string(), normal_style));
+                }
+                if e > s {
+                    spans.push(Span::styled(line[s..e].to_string(), sel_style));
+                }
+                if e < line.len() {
+                    spans.push(Span::styled(line[e..].to_string(), normal_style));
+                }
+                Line::from(spans)
+            })
+            .collect();
+        ratatui::text::Text::from(styled_lines)
+    } else {
+        ratatui::text::Text::from(content)
+    };
+
+    let char_count = content.chars().count();
+    let total_lines = content.lines().count();
+    let hovered_preview = in_rect(area, app.mouse_col, app.mouse_row);
+    let border_style = if hovered_preview {
+        Style::default().fg(Color::Rgb(108, 112, 134))
+    } else {
+        Style::default().fg(Color::Rgb(49, 50, 68))
+    };
+    let p = Paragraph::new(styled_text)
+        .block(
+            Block::default()
+                .title(format!(" {} chars · {} lines ", char_count, total_lines))
+                .title_bottom(" scroll ↑↓/wheel ")
+                .borders(Borders::ALL)
+                .border_style(border_style),
+        )
+        .wrap(Wrap { trim: false })
+        .scroll((app.preview_scroll, 0));
+    f.render_widget(p, area);
+
     let tab_labels = [" Body ", " Appendix ", " Note ", " Description "];
     let tab_widths = [7u16, 11u16, 7u16, 14u16];
 
@@ -641,34 +723,6 @@ fn render_preview(f: &mut Frame, app: &App, area: Rect, tab_area: Rect) {
         f.render_widget(tab, tab_rect);
         tab_x += w;
     }
-
-    let text = if app.current_paper.is_some() {
-        app.current_text()
-    } else {
-        "← Click a paper or press Enter to load"
-    };
-
-    let content = if text.is_empty() { "(empty)" } else { text };
-
-    let char_count = content.chars().count();
-    let lines = content.lines().count();
-    let hovered_preview = in_rect(area, app.mouse_col, app.mouse_row);
-    let border_style = if hovered_preview {
-        Style::default().fg(Color::Rgb(108, 112, 134))
-    } else {
-        Style::default().fg(Color::Rgb(49, 50, 68))
-    };
-    let p = Paragraph::new(content)
-        .block(
-            Block::default()
-                .title(format!(" {} chars · {} lines ", char_count, lines))
-                .title_bottom(" scroll ↑↓/wheel ")
-                .borders(Borders::ALL)
-                .border_style(border_style),
-        )
-        .wrap(Wrap { trim: false })
-        .scroll((app.preview_scroll, 0));
-    f.render_widget(p, area);
 }
 
 fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
