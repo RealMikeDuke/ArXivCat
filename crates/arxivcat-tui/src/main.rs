@@ -188,18 +188,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
 
         MouseEventKind::Up(MouseButton::Left) => {
             app.dragging_border = None;
-            if app.selecting {
-                app.selecting = false;
-                if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
-                    let (sx, sy) = start;
-                    let (ex, ey) = end;
-                    let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
-                    let content = app.get_sel_text(x1, y1, x2, y2);
-                    if !content.is_empty() { copy_to_clipboard(&content); app.just_selected = true; }
-                }
-                app.sel_start = None;
-                app.sel_end = None;
-            }
+            app.selecting = false;
         }
 
         _ => {}
@@ -217,7 +206,24 @@ fn in_rect(r: Rect, col: u16, row: u16) -> bool {
 
 async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
     match app.input_mode {
-        InputMode::Chat => match key.code {
+        InputMode::Chat => {
+            // Ctrl+V paste
+            if key.code == KeyCode::Char('v') && is_ctrl(&key) {
+                if let Ok(mut c) = arboard::Clipboard::new() {
+                    if let Ok(t) = c.get_text() {
+                        let lines = t.lines().count();
+                        if lines > 1 {
+                            app.chat_input.insert_str(app.chat_cursor, &format!("[Pasted ~{lines} lines]"));
+                            app.chat_cursor += format!("[Pasted ~{lines} lines]").len();
+                        } else {
+                            app.chat_input.insert_str(app.chat_cursor, &t);
+                            app.chat_cursor += t.len();
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            match key.code {
             KeyCode::Esc => { app.input_mode = InputMode::Normal; app.show_chat = false; }
             KeyCode::Enter => {
                 let msg = std::mem::take(&mut app.chat_input);
@@ -235,21 +241,56 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::End => app.chat_cursor = app.chat_input.len(),
             KeyCode::Char(c) => { app.chat_input.insert(app.chat_cursor, c); app.chat_cursor += 1; }
             _ => {}
-        },
-        InputMode::NoteEdit => match key.code {
+        }},
+        InputMode::NoteEdit => {
+            if key.code == KeyCode::Char('v') && is_ctrl(&key) {
+                if let Ok(mut c) = arboard::Clipboard::new() {
+                    if let Ok(t) = c.get_text() {
+                        del_sel(app);
+                        let text = app.current_text_mut();
+                        let lines = t.lines().count();
+                        if lines > 1 { text.push_str(&format!("[Pasted ~{lines} lines]")); }
+                        else { text.push_str(&t); }
+                    }
+                }
+                return Ok(());
+            }
+            match key.code {
             KeyCode::Esc => {
                 if let Some(ref paper) = app.current_paper {
                     let _ = std::fs::write(paper.folder.join("note.txt"), &app.note_content);
                     app.add_log("note saved");
                 }
                 app.input_mode = InputMode::Normal;
+                app.sel_start = None; app.sel_end = None;
             }
-            KeyCode::Backspace => { app.current_text_mut().pop(); }
-            KeyCode::Enter => { app.current_text_mut().push('\n'); }
-            KeyCode::Char(c) => { app.current_text_mut().push(c); }
+            KeyCode::Backspace => {
+                if has_sel(app) { del_sel(app); }
+                else { app.current_text_mut().pop(); }
+            }
+            KeyCode::Enter => {
+                if has_sel(app) { del_sel(app); }
+                app.current_text_mut().push('\n');
+            }
+            KeyCode::Char(c) => {
+                if has_sel(app) { del_sel(app); }
+                app.current_text_mut().push(c);
+            }
             _ => {}
-        },
-        InputMode::Command => match key.code {
+        }},
+        InputMode::Command => {
+            if key.code == KeyCode::Char('v') && is_ctrl(&key) {
+                if let Ok(mut c) = arboard::Clipboard::new() {
+                    if let Ok(t) = c.get_text() {
+                        let lines = t.lines().count();
+                        if lines > 1 { app.status = format!("[Pasted ~{lines} lines]"); }
+                        else { app.status = t; }
+                        app.cmd_cursor = app.status.len();
+                    }
+                }
+                return Ok(());
+            }
+            match key.code {
             KeyCode::Esc => { app.input_mode = InputMode::Normal; app.status.clear(); app.cmd_cursor = 1; }
             KeyCode::Enter => {
                 let body = std::mem::take(&mut app.status).strip_prefix(':').unwrap_or("").to_string();
@@ -270,7 +311,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::End => app.cmd_cursor = app.status.len(),
             KeyCode::Char(c) => { app.status.insert(app.cmd_cursor, c); app.cmd_cursor += 1; }
             _ => {}
-        },
+        }},
         InputMode::Normal => {
             // Ctrl+Alt+Q toggles hotkey lock
             if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
@@ -279,6 +320,20 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             {
                 app.hotkeys_locked = !app.hotkeys_locked;
                 app.add_log(if app.hotkeys_locked { "hotkeys locked" } else { "hotkeys unlocked" });
+                return Ok(());
+            }
+
+            // Ctrl+C copy selection
+            if key.code == KeyCode::Char('c') && is_ctrl(&key) {
+                if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
+                    let (sx, sy) = start;
+                    let (ex, ey) = end;
+                    let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
+                    let content = app.get_sel_text(x1, y1, x2, y2);
+                    if !content.is_empty() { copy_to_clipboard(&content); app.just_selected = true; }
+                }
+                app.sel_start = None;
+                app.sel_end = None;
                 return Ok(());
             }
 
@@ -607,4 +662,36 @@ fn build_cursor_text(text: &str, cursor: usize, prefix: &str, active: bool) -> r
     spans.push(Span::styled(cur_char.to_string(), Style::default().fg(Color::Rgb(30, 30, 46)).bg(Color::Rgb(137, 180, 250))));
     if !after.is_empty() { spans.push(Span::raw(after.to_string())); }
     ratatui::text::Text::from(TLine::from(spans))
+}
+
+fn is_ctrl(key: &event::KeyEvent) -> bool {
+    key.modifiers == crossterm::event::KeyModifiers::CONTROL
+}
+
+fn has_sel(app: &App) -> bool {
+    app.sel_start.is_some() && app.sel_end.is_some()
+}
+
+fn del_sel(app: &mut App) {
+    if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
+        let (sx, sy) = start;
+        let (ex, ey) = end;
+        let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
+        let selected = app.get_sel_text(x1, y1, x2, y2);
+        let text = app.current_text_mut();
+        if let Some(pos) = text.find(&selected) {
+            text.replace_range(pos..pos + selected.len(), "");
+        } else {
+            let lines: Vec<&str> = text.lines().collect();
+            let sy = y1.min(y2) as usize;
+            let ey = y1.max(y2) as usize;
+            if sy < lines.len() {
+                let start: usize = lines.iter().take(sy).map(|l| l.len() + 1).sum();
+                let end: usize = lines.iter().take((ey + 1).min(lines.len())).map(|l| l.len() + 1).sum::<usize>().saturating_sub(1);
+                text.replace_range(start..end.min(text.len()), "");
+            }
+        }
+    }
+    app.sel_start = None;
+    app.sel_end = None;
 }
