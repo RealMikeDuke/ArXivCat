@@ -160,7 +160,10 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                     let lines: Vec<&str> = text.lines().collect();
                     let byte_pos = if (rel_y as usize) < lines.len() {
                         let line_start: usize = lines.iter().take(rel_y as usize).map(|l| l.len() + 1).sum();
-                        line_start + rel_x.min(lines[rel_y as usize].len() as u16).saturating_sub(1) as usize
+                        let char_idx = (rel_x as usize).saturating_sub(1);
+                        let line = lines[rel_y as usize];
+                        let offset = line.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(line.len());
+                        line_start + offset
                     } else { 0 };
                     app.preview_cursor = cb(text, byte_pos);
                     app.selecting = true;
@@ -233,13 +236,25 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                 }
                 app.chat_cursor = 0;
             }
-            KeyCode::Backspace => { if app.chat_cursor > 0 { app.chat_cursor -= 1; app.chat_input.remove(app.chat_cursor); } }
-            KeyCode::Delete => { if app.chat_cursor < app.chat_input.len() { app.chat_input.remove(app.chat_cursor); } }
+            KeyCode::Backspace => {
+                if app.chat_cursor > 0 {
+                    app.chat_cursor = cb(&app.chat_input, app.chat_cursor.saturating_sub(1));
+                    app.chat_input.remove(app.chat_cursor);
+                }
+            }
+            KeyCode::Delete => {
+                if app.chat_cursor < app.chat_input.len() {
+                    app.chat_input.remove(app.chat_cursor);
+                }
+            }
             KeyCode::Left => app.chat_cursor = cb(&app.chat_input, app.chat_cursor.saturating_sub(1)),
             KeyCode::Right => app.chat_cursor = cb(&app.chat_input, app.chat_cursor + 1).min(app.chat_input.len()),
             KeyCode::Home => app.chat_cursor = 0,
             KeyCode::End => app.chat_cursor = app.chat_input.len(),
-            KeyCode::Char(c) => { app.chat_input.insert(app.chat_cursor, c); app.chat_cursor += 1; }
+            KeyCode::Char(c) => {
+                app.chat_input.insert(app.chat_cursor, c);
+                app.chat_cursor += c.len_utf8();
+            }
             _ => {}
         }},
         InputMode::NoteEdit => {
@@ -309,7 +324,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::Right => app.cmd_cursor = (app.cmd_cursor + 1).min(app.status.len()),
             KeyCode::Home => app.cmd_cursor = 1,
             KeyCode::End => app.cmd_cursor = app.status.len(),
-            KeyCode::Char(c) => { app.status.insert(app.cmd_cursor, c); app.cmd_cursor += 1; }
+            KeyCode::Char(c) => { app.status.insert(app.cmd_cursor, c); app.cmd_cursor += c.len_utf8(); }
             _ => {}
         }},
         InputMode::Normal => {
