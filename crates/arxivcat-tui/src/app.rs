@@ -38,6 +38,8 @@ pub struct App {
     pub left_width_pct: u16,
     pub right_width_pct: u16,
     pub dragging_border: Option<usize>,
+    pub hover_left_border: bool,
+    pub hover_right_border: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -99,6 +101,8 @@ impl App {
             left_width_pct: 25,
             right_width_pct: 35,
             dragging_border: None,
+            hover_left_border: false,
+            hover_right_border: false,
         }
     }
 

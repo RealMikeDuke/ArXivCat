@@ -24,14 +24,12 @@ struct Rects {
     chat: Rect,
     chat_input: Rect,
     three_pane: bool,
-    border_left: Rect,
-    border_right: Rect,
+    body: Rect,
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut app = App::new();
-
     if let Some(ref wp) = config::load_workspace_path() {
         let p = std::path::PathBuf::from(wp);
         if p.exists() {
@@ -57,10 +55,7 @@ async fn main() -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
-
-    if let Err(e) = res {
-        eprintln!("error: {e}");
-    }
+    if let Err(e) = res { eprintln!("error: {e}"); }
     Ok(())
 }
 
@@ -69,23 +64,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::R
     loop {
         terminal.draw(|f| rects = ui(f, app))?;
 
-        if app.just_selected {
-            app.just_selected = false;
-        }
-        if app.quit {
-            break;
-        }
+        if app.just_selected { app.just_selected = false; }
+        if app.quit { break; }
 
         if event::poll(std::time::Duration::from_millis(50))? {
             match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
-                        handle_key(app, key).await?;
-                    }
-                }
-                Event::Mouse(mouse) => {
-                    handle_mouse(app, &mouse, &rects).await?;
-                }
+                Event::Key(key) => if key.kind == KeyEventKind::Press { handle_key(app, key).await?; }
+                Event::Mouse(mouse) => handle_mouse(app, &mouse, &rects).await?,
                 _ => {}
             }
         }
@@ -93,10 +78,25 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::R
     Ok(())
 }
 
+fn panel_seam(panel: Rect) -> (u16, u16) {
+    (panel.x + panel.width - 1, panel.x + panel.width)
+}
+
 async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::Result<()> {
     let (col, row) = (mouse.column, mouse.row);
     app.mouse_col = col;
     app.mouse_row = row;
+
+    let left_seam = panel_seam(rects.paper_list);
+    let on_left_seam = row >= rects.body.y && row < rects.body.y + rects.body.height
+        && col >= left_seam.0 && col <= left_seam.1 + 1;
+    let right_seam = if rects.three_pane { Some(panel_seam(rects.preview_text)) } else { None };
+    let on_right_seam = right_seam.map(|(s, e)| {
+        row >= rects.body.y && row < rects.body.y + rects.body.height && col >= s.saturating_sub(1) && col <= e + 1
+    }).unwrap_or(false);
+
+    app.hover_left_border = on_left_seam;
+    app.hover_right_border = on_right_seam;
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -105,8 +105,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if rects.three_pane && in_rect(rects.chat, col, row) {
                 app.chat_scroll = app.chat_scroll.saturating_add(3);
             } else if in_rect(rects.paper_list, col, row) && !app.papers.is_empty() {
-                let max = app.papers.len().saturating_sub(1);
-                app.paper_list_selected = (app.paper_list_selected + 1).min(max);
+                app.paper_list_selected = (app.paper_list_selected + 1).min(app.papers.len().saturating_sub(1));
             }
         }
         MouseEventKind::ScrollUp => {
@@ -122,9 +121,12 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
         MouseEventKind::Down(MouseButton::Left) => {
             app.just_selected = false;
 
-            if in_rect(rects.border_left, col, row) || in_rect(rects.border_right, col, row) {
-                let is_left = in_rect(rects.border_left, col, row);
-                app.dragging_border = Some(if is_left { 0 } else { 1 });
+            if on_left_seam {
+                app.dragging_border = Some(0);
+                return Ok(());
+            }
+            if on_right_seam {
+                app.dragging_border = Some(1);
                 return Ok(());
             }
 
@@ -139,25 +141,19 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if in_rect(rects.preview_tabs, col, row) {
                 let rel_col = col.saturating_sub(rects.preview_tabs.x);
                 let tab_idx = (rel_col / 8).clamp(0, 3) as usize;
-                let views = [ViewMode::Body, ViewMode::Appendix, ViewMode::Note, ViewMode::Description];
-                app.view_mode = views[tab_idx];
+                app.view_mode = [ViewMode::Body, ViewMode::Appendix, ViewMode::Note, ViewMode::Description][tab_idx];
             } else if in_rect(rects.chat_input, col, row) {
                 app.show_chat = true;
                 app.input_mode = InputMode::Chat;
-                app.chat_cursor = col
-                    .saturating_sub(rects.chat_input.x + 2)
-                    .min(app.chat_input.len() as u16) as usize;
+                app.chat_cursor = col.saturating_sub(rects.chat_input.x + 2).min(app.chat_input.len() as u16) as usize;
             } else if in_rect(rects.chat, col, row) {
                 app.show_chat = true;
                 app.input_mode = InputMode::Chat;
             } else if in_rect(rects.preview_text, col, row) {
-                if app.input_mode == InputMode::Chat {
-                    app.input_mode = InputMode::Normal;
-                } else {
+                if app.input_mode == InputMode::Chat { app.input_mode = InputMode::Normal; }
+                else {
                     app.selecting = true;
-                    let rel_x = col.saturating_sub(rects.preview_text.x + 1);
-                    let rel_y = row.saturating_sub(rects.preview_text.y + 1);
-                    app.sel_start = Some((rel_x, rel_y));
+                    app.sel_start = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1)));
                     app.sel_end = None;
                 }
             }
@@ -165,42 +161,31 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
 
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(border_idx) = app.dragging_border {
-                let total_w = rects.preview_text.x + rects.preview_text.width - rects.paper_list.x;
-                let left_pct = ((col.saturating_sub(rects.paper_list.x) as u32 * 100) / total_w as u32).clamp(15, 50) as u16;
+                let body_w = rects.body.width;
+                if body_w == 0 { return Ok(()); }
                 if border_idx == 0 {
-                    app.left_width_pct = left_pct;
+                    let pct = ((col.saturating_sub(rects.body.x) as u32 * 100) / body_w as u32).clamp(15, 55) as u16;
+                    app.left_width_pct = pct;
                 } else {
-                    let right_edge = rects.chat.x + rects.chat.width;
-                    let right_pct = ((right_edge.saturating_sub(col) as u32 * 100) / total_w as u32).clamp(20, 50) as u16;
-                    app.right_width_pct = right_pct;
+                    let pct = ((rects.body.x + body_w).saturating_sub(col) as u32 * 100 / body_w as u32).clamp(20, 50) as u16;
+                    app.right_width_pct = pct;
                 }
             } else if app.selecting && in_rect(rects.preview_text, col, row) {
-                let rel_x = col.saturating_sub(rects.preview_text.x + 1);
-                let rel_y = row.saturating_sub(rects.preview_text.y + 1);
-                app.sel_end = Some((rel_x, rel_y));
+                app.sel_end = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1)));
             }
         }
 
         MouseEventKind::Up(MouseButton::Left) => {
-            if app.dragging_border.is_some() {
-                app.dragging_border = None;
-            }
+            app.dragging_border = None;
             if app.selecting {
                 app.selecting = false;
                 if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
                     let text = app.current_text();
                     let (sx, sy) = start;
                     let (ex, ey) = end;
-                    let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) {
-                        (sx, sy, ex, ey)
-                    } else {
-                        (ex, ey, sx, sy)
-                    };
-                    let content = get_selected_text(text, x1, y1, x2, y2);
-                    if !content.is_empty() {
-                        copy_to_clipboard(&content);
-                        app.just_selected = true;
-                    }
+                    let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
+                    let content = get_selected(text, x1, y1, x2, y2);
+                    if !content.is_empty() { copy_to_clipboard(&content); app.just_selected = true; }
                 }
                 app.sel_start = None;
                 app.sel_end = None;
@@ -212,7 +197,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
     Ok(())
 }
 
-fn get_selected_text(text: &str, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
+fn get_selected(text: &str, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let (x1, y1, x2, y2) = (x1 as usize, y1 as usize, x2 as usize, y2 as usize);
     if y1 >= lines.len() { return String::new(); }
@@ -240,8 +225,6 @@ fn copy_to_clipboard(text: &str) {
 fn in_rect(r: Rect, col: u16, row: u16) -> bool {
     col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
-
-// ─── Keyboard ───
 
 async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
     match app.input_mode {
@@ -281,15 +264,12 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::Esc => { app.input_mode = InputMode::Normal; app.status.clear(); app.cmd_cursor = 1; }
             KeyCode::Enter => {
                 let body = std::mem::take(&mut app.status).strip_prefix(':').unwrap_or("").to_string();
-                app.cmd_cursor = 1;
-                app.input_mode = InputMode::Normal;
+                app.cmd_cursor = 1; app.input_mode = InputMode::Normal;
                 match body.as_str() {
                     "o"|"open" => if let Some(ref p) = app.current_paper { let _ = open::that(&p.folder); }
                     "p"|"pdf" => if let Some(ref p) = app.current_paper { let _ = open::that(format!("https://arxiv.org/pdf/{}", p.arxiv_id)); }
                     "scan" => app.scan_pdfs().await,
                     "dl"|"download" => app.download_all().await,
-                    "m"|"model" => { app.chat_model = if app.chat_model == "Flash" { "Pro".into() } else { "Flash".into() }; let _ = config::save_model_preference(&app.chat_model); }
-                    "t"|"think" => { app.deep_thinking = !app.deep_thinking; }
                     _ => app.add_log(&format!("unknown: {body}")),
                 }
             }
@@ -325,8 +305,6 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
     Ok(())
 }
 
-// ─── Layout & UI ───
-
 fn ui(f: &mut Frame, app: &mut App) -> Rects {
     let mut rects = Rects::default();
     let main = Layout::default()
@@ -338,69 +316,59 @@ fn ui(f: &mut Frame, app: &mut App) -> Rects {
     render_header(f, app, rects.header);
 
     let body = main[1];
+    rects.body = body;
     let three_pane = app.show_chat && app.current_paper.is_some();
     rects.three_pane = three_pane;
 
+    let left_pct = app.left_width_pct;
+    let right_pct = app.right_width_pct;
+    let mid_pct = if three_pane {
+        100u16.saturating_sub(left_pct).saturating_sub(right_pct)
+    } else {
+        100u16.saturating_sub(left_pct)
+    };
+
     if three_pane {
         let h = Layout::default().direction(Direction::Horizontal).constraints([
-            Constraint::Percentage(app.left_width_pct),
-            Constraint::Length(1),
-            Constraint::Percentage(100u16.saturating_sub(app.left_width_pct + app.right_width_pct + 1) / 2),
-            Constraint::Length(1),
-            Constraint::Percentage(app.right_width_pct),
+            Constraint::Percentage(left_pct),
+            Constraint::Percentage(mid_pct),
+            Constraint::Percentage(right_pct),
         ]).split(body);
         rects.paper_list = h[0];
-        rects.border_left = h[1];
-        rects.preview_text = Layout::default().direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(h[2])[1];
+        let prev_area = h[1];
+        rects.chat = h[2];
+
         rects.preview_tabs = Layout::default().direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(h[2])[0];
-        rects.border_right = h[3];
-        rects.chat = h[4];
+            .split(prev_area)[0];
+        rects.preview_text = Layout::default().direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(prev_area)[1];
         let cc = Layout::default().direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(3)])
             .split(rects.chat);
         rects.chat_input = cc[1];
     } else {
         let h = Layout::default().direction(Direction::Horizontal).constraints([
-            Constraint::Percentage(app.left_width_pct),
-            Constraint::Length(1),
-            Constraint::Percentage(100u16.saturating_sub(app.left_width_pct + 1)),
+            Constraint::Percentage(left_pct),
+            Constraint::Percentage(mid_pct),
         ]).split(body);
         rects.paper_list = h[0];
-        rects.border_left = h[1];
-        rects.preview_text = Layout::default().direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(h[2])[1];
+        let prev_area = h[1];
+
         rects.preview_tabs = Layout::default().direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(h[2])[0];
+            .split(prev_area)[0];
+        rects.preview_text = Layout::default().direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(prev_area)[1];
     }
 
     render_paper_list(f, app, rects.paper_list);
     render_preview(f, app, rects.preview_text, rects.preview_tabs);
     if three_pane { render_chat(f, app, rects.chat, rects.chat_input); }
-    render_borders(f, app, &rects);
     render_status(f, app, rects.status);
     rects
-}
-
-fn render_borders(f: &mut Frame, app: &App, rects: &Rects) {
-    let drag_left = app.dragging_border == Some(0);
-    let hover_left = in_rect(rects.border_left, app.mouse_col, app.mouse_row);
-    let color_left = if drag_left { Color::Rgb(137, 180, 250) } else if hover_left { Color::Rgb(108, 112, 134) } else { Color::Rgb(49, 50, 68) };
-    let left_block = Block::default().style(Style::default().bg(color_left));
-    f.render_widget(left_block, rects.border_left);
-
-    if rects.three_pane {
-        let drag_right = app.dragging_border == Some(1);
-        let hover_right = in_rect(rects.border_right, app.mouse_col, app.mouse_row);
-        let color_right = if drag_right { Color::Rgb(137, 180, 250) } else if hover_right { Color::Rgb(108, 112, 134) } else { Color::Rgb(49, 50, 68) };
-        let right_block = Block::default().style(Style::default().bg(color_right));
-        f.render_widget(right_block, rects.border_right);
-    }
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
