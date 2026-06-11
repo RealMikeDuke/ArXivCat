@@ -152,8 +152,19 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if in_rect(rects.preview_text, col, row) {
                 if app.input_mode == InputMode::Chat { app.input_mode = InputMode::Normal; }
                 else {
+                    // set cursor at click position
+                    let rel_x = col.saturating_sub(rects.preview_text.x + 1);
+                    let rel_y = row.saturating_sub(rects.preview_text.y + 1);
+                    let text = app.current_text();
+                    let lines: Vec<&str> = text.lines().collect();
+                    let byte_pos = if (rel_y as usize) < lines.len() {
+                        let line_start: usize = lines.iter().take(rel_y as usize).map(|l| l.len() + 1).sum();
+                        line_start + rel_x.min(lines[rel_y as usize].len() as u16).saturating_sub(1) as usize
+                    } else { 0 };
+                    let cb = |s: &str, idx: usize| { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j };
+                    app.preview_cursor = cb(text, byte_pos);
                     app.selecting = true;
-                    app.sel_start = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1)));
+                    app.sel_start = Some((rel_x, rel_y));
                     app.sel_end = None;
                 }
             }
@@ -260,24 +271,80 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::Char(c) => { app.status.insert(app.cmd_cursor, c); app.cmd_cursor += 1; }
             _ => {}
         },
-        InputMode::Normal => match key.code {
-            KeyCode::Char('q') => app.quit = true,
-            KeyCode::Char('?') => app.add_log("j↓/k↑ enter:load 1-4:view c:chat e:edit s:scan d:dl :cmd q:quit"),
-            KeyCode::Char('j')|KeyCode::Down => if !app.papers.is_empty() && app.paper_list_selected + 1 < app.papers.len() { app.paper_list_selected += 1; }
-            KeyCode::Char('k')|KeyCode::Up => app.paper_list_selected = app.paper_list_selected.saturating_sub(1),
+        InputMode::Normal => {
+            // Ctrl+Alt+Q toggles hotkey lock
+            if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                && key.modifiers.contains(crossterm::event::KeyModifiers::ALT)
+                && key.code == KeyCode::Char('q')
+            {
+                app.hotkeys_locked = !app.hotkeys_locked;
+                app.add_log(if app.hotkeys_locked { "hotkeys locked" } else { "hotkeys unlocked" });
+                return Ok(());
+            }
+
+            match key.code {
+            KeyCode::Char('q') if !app.hotkeys_locked => app.quit = true,
+            KeyCode::Char('q') => {} // blocked when locked
+            KeyCode::Char('?') => app.add_log("j↓/k↑ enter:load 1-4:view c:chat e:edit s:scan d:dl :cmd q:quit Ctrl+Alt+Q:unlock"),
+            KeyCode::Char('j') => if !app.papers.is_empty() && app.paper_list_selected + 1 < app.papers.len() { app.paper_list_selected += 1; }
+            KeyCode::Char('k') => app.paper_list_selected = app.paper_list_selected.saturating_sub(1),
             KeyCode::Enter => if !app.papers.is_empty() { let idx = app.paper_list_selected; app.load_paper(idx); app.show_chat = true; }
-            KeyCode::Char('1') => app.view_mode = ViewMode::Body,
-            KeyCode::Char('2') => app.view_mode = ViewMode::Appendix,
-            KeyCode::Char('3') => app.view_mode = ViewMode::Note,
-            KeyCode::Char('4') => app.view_mode = ViewMode::Description,
-            KeyCode::Char('e') => if app.view_mode == ViewMode::Note && app.current_paper.is_some() { app.input_mode = InputMode::NoteEdit; app.add_log("editing note (Esc to save)"); }
-            KeyCode::Char('c') => if app.current_paper.is_some() { app.show_chat = !app.show_chat; app.input_mode = if app.show_chat { InputMode::Chat } else { InputMode::Normal }; }
-            KeyCode::Char('s') => app.scan_pdfs().await,
-            KeyCode::Char('d') => app.download_all().await,
-            KeyCode::Char('o') => if let Some(ref p) = app.current_paper { let _ = open::that(&p.folder); app.add_log(&format!("opened {}", p.folder.display())); }
-            KeyCode::Char('p') => if let Some(ref p) = app.current_paper { let _ = open::that(format!("https://arxiv.org/pdf/{}", p.arxiv_id)); }
-            KeyCode::Char(':') => { app.input_mode = InputMode::Command; app.status = ":".into(); }
+            KeyCode::Char('1') if !app.hotkeys_locked => app.view_mode = ViewMode::Body,
+            KeyCode::Char('2') if !app.hotkeys_locked => app.view_mode = ViewMode::Appendix,
+            KeyCode::Char('3') if !app.hotkeys_locked => app.view_mode = ViewMode::Note,
+            KeyCode::Char('4') if !app.hotkeys_locked => app.view_mode = ViewMode::Description,
+            KeyCode::Char('e') if !app.hotkeys_locked => if app.view_mode == ViewMode::Note && app.current_paper.is_some() { app.input_mode = InputMode::NoteEdit; app.add_log("editing note (Esc to save)"); }
+            KeyCode::Char('c') if !app.hotkeys_locked => if app.current_paper.is_some() { app.show_chat = !app.show_chat; app.input_mode = if app.show_chat { InputMode::Chat } else { InputMode::Normal }; }
+            KeyCode::Char('s') if !app.hotkeys_locked => app.scan_pdfs().await,
+            KeyCode::Char('d') if !app.hotkeys_locked => app.download_all().await,
+            KeyCode::Char('o') if !app.hotkeys_locked => if let Some(ref p) = app.current_paper { let _ = open::that(&p.folder); app.add_log(&format!("opened {}", p.folder.display())); }
+            KeyCode::Char('p') if !app.hotkeys_locked => if let Some(ref p) = app.current_paper { let _ = open::that(format!("https://arxiv.org/pdf/{}", p.arxiv_id)); }
+            KeyCode::Char(':') if !app.hotkeys_locked => { app.input_mode = InputMode::Command; app.status = ":".into(); }
+            // Arrow keys in preview move cursor
+            KeyCode::Left => {
+                let t = app.current_text().to_string();
+                let mut c = app.preview_cursor;
+                if c > 0 { c -= 1; while c > 0 && !t.is_char_boundary(c) { c -= 1; } }
+                app.preview_cursor = c;
+            }
+            KeyCode::Right => {
+                let t = app.current_text().to_string();
+                let mut c = app.preview_cursor;
+                if c < t.len() { c += 1; while c < t.len() && !t.is_char_boundary(c) { c += 1; } }
+                app.preview_cursor = c;
+            }
+            KeyCode::Up => {
+                let t = app.current_text().to_string();
+                let c = app.preview_cursor;
+                let line_start = t[..c].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                if line_start > 0 {
+                    let prev_start = t[..line_start-1].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let col = c - line_start;
+                    app.preview_cursor = (prev_start + col).min(line_start - 1);
+                }
+            }
+            KeyCode::Down => {
+                let t = app.current_text().to_string();
+                let c = app.preview_cursor;
+                let line_end = t[c..].find('\n').map(|i| c + i + 1).unwrap_or(t.len());
+                if line_end < t.len() {
+                    let next_end = t[line_end..].find('\n').map(|i| line_end + i + 1).unwrap_or(t.len());
+                    let col = c.saturating_sub(t[..c].rfind('\n').map(|i| i + 1).unwrap_or(0));
+                    app.preview_cursor = (line_end + col).min(next_end - 1);
+                }
+            }
+            KeyCode::Home => {
+                let t = app.current_text().to_string();
+                let c = app.preview_cursor;
+                app.preview_cursor = t[..c].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            }
+            KeyCode::End => {
+                let t = app.current_text().to_string();
+                let c = app.preview_cursor;
+                app.preview_cursor = t[c..].find('\n').map(|i| c + i).unwrap_or(t.len());
+            }
             _ => {}
+            }
         },
     }
     Ok(())
@@ -388,39 +455,87 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
     let text = if app.current_paper.is_some() { app.current_text() } else { "← Click a paper or press Enter to load" };
     let content = if text.is_empty() { "(empty)" } else { text };
 
-    let styled: ratatui::text::Text = if app.selecting && app.sel_start.is_some() && app.current_paper.is_some() && !text.is_empty() {
-        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
-        let (sx, sy) = app.sel_start.unwrap();
-        let (ex, ey) = app.sel_end.unwrap_or((sx, sy));
-        let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx as usize, sy as usize, ex as usize, ey as usize) }
-        else { (ex as usize, ey as usize, sx as usize, sy as usize) };
+    let chars = content.chars().count();
+    let lines_c = content.lines().count();
+    let hovered = in_rect(text_area, app.mouse_col, app.mouse_row);
+    let border = if hovered { Style::default().fg(Color::Rgb(108, 112, 134)) } else { Style::default().fg(Color::Rgb(49, 50, 68)) };
+
+    // Build styled text with cursor
+    let styled: ratatui::text::Text = {
         let normal = Style::default().fg(Color::Rgb(205, 214, 244));
-        let sel = Style::default().fg(Color::Rgb(205, 214, 244)).bg(Color::Rgb(69, 71, 90));
+        let cursor_style = Style::default().fg(Color::Rgb(30, 30, 46)).bg(Color::Rgb(137, 180, 250));
+        let sel_style = Style::default().fg(Color::Rgb(205, 214, 244)).bg(Color::Rgb(69, 71, 90));
+
+        let has_sel = app.selecting && app.sel_start.is_some();
+        let (x1, y1, x2, y2) = if has_sel {
+            let (sx, sy) = app.sel_start.unwrap();
+            let (ex, ey) = app.sel_end.unwrap_or((sx, sy));
+            if (sy, sx) <= (ey, ex) { (sx as usize, sy as usize, ex as usize, ey as usize) }
+            else { (ex as usize, ey as usize, sx as usize, sy as usize) }
+        } else { (0, 0, 0, 0) };
+
+        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
+
         let lines: Vec<TLine> = content.lines().enumerate().map(|(li, line)| {
-            if li < y1 || li > y2 { return TLine::from(Span::styled(line.to_string(), normal)); }
-            let sc = if li == y1 { cb(line, x1) } else { 0 };
-            let ec = if li == y2 { cb(line, x2) } else { line.len() };
-            let s = sc.min(line.len()); let e = ec.min(line.len()).max(s);
-            let mut spans = Vec::new();
-            if s > 0 { spans.push(Span::styled(line[..s].to_string(), normal)); }
-            if e > s { spans.push(Span::styled(line[s..e].to_string(), sel)); }
-            if e < line.len() { spans.push(Span::styled(line[e..].to_string(), normal)); }
+            let cur_start = if app.current_paper.is_some() { app.preview_cursor } else { usize::MAX };
+            let total_before: usize = content.lines().take(li).map(|l| l.len() + 1).sum();
+            let cursor_in_line = if cur_start >= total_before && cur_start < total_before + line.len() + 1 {
+                Some(cur_start - total_before)
+            } else { None };
+
+            let in_sel = has_sel && li >= y1 && li <= y2;
+            let sel_start = if li == y1 { cb(line, x1) } else { 0 };
+            let sel_end = if li == y2 { cb(line, x2) } else { line.len() };
+
+            let mut spans: Vec<Span> = Vec::new();
+            let mut pos = 0;
+            while pos < line.len() {
+                let sel_in_range = in_sel && pos >= sel_start && pos < sel_end;
+
+                let mut end = line.len();
+                if let Some(cp) = cursor_in_line { if cp > pos && cp < end { end = cp; } }
+                if in_sel && sel_in_range {
+                    if sel_end > pos && sel_end < end { end = sel_end; }
+                } else {
+                    if sel_start > pos && sel_start < end { end = sel_start; }
+                }
+                // Find next cursor position
+                if let Some(cp) = cursor_in_line {
+                    if cp == pos {
+                        let ch = line[cp..].chars().next().unwrap_or(' ');
+                        let clen = ch.len_utf8();
+                        spans.push(Span::styled(ch.to_string(), cursor_style));
+                        pos = cp + clen;
+                        continue;
+                    }
+                }
+
+                let style = if in_sel && pos >= sel_start && pos < sel_end { sel_style } else { normal };
+                spans.push(Span::styled(line[pos..end].to_string(), style));
+                pos = end;
+            }
+            // Handle cursor at end of line
+            if let Some(cp) = cursor_in_line {
+                if cp >= line.len() {
+                    spans.push(Span::styled(" ".to_string(), cursor_style));
+                }
+            }
             TLine::from(spans)
         }).collect();
         ratatui::text::Text::from(lines)
-    } else { ratatui::text::Text::from(content) };
+    };
 
-    let chars = content.chars().count();
-    let lines = content.lines().count();
-    let hovered = in_rect(text_area, app.mouse_col, app.mouse_row);
-    let border = if hovered { Style::default().fg(Color::Rgb(108, 112, 134)) } else { Style::default().fg(Color::Rgb(49, 50, 68)) };
     f.render_widget(
         Paragraph::new(styled)
-            .block(Block::default().title(format!(" {} chars · {} lines ", chars, lines)).title_bottom(" scroll ↑↓/wheel ").borders(Borders::ALL).border_style(border))
-            .wrap(Wrap { trim: false }).scroll((app.preview_scroll, 0)),
+            .block(Block::default().title(format!(" {} chars · {} lines ", chars, lines_c))
+                .title_bottom(if app.hotkeys_locked { "🔒 Ctrl+Alt+Q unlock | scroll ↑↓/wheel →/← " } else { "🔓 unlocked | scroll ↑↓/wheel →/← " })
+                .borders(Borders::ALL).border_style(border))
+            .wrap(Wrap { trim: true })
+            .scroll((app.preview_scroll, app.preview_hscroll)),
         text_area,
     );
 
+    // Tab buttons
     let tab_labels = ["Body", "Appdx", "Note", "Desc"];
     let tab_widths = [6u16, 7u16, 6u16, 6u16];
     let mut tx = tab_area.x;

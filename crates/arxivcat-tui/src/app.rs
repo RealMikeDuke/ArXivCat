@@ -41,6 +41,9 @@ pub struct App {
     pub hover_left_border: bool,
     pub hover_right_border: bool,
     pub text_line_width: u16,
+    pub preview_cursor: usize,
+    pub hotkeys_locked: bool,
+    pub preview_hscroll: u16,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -105,6 +108,9 @@ impl App {
             hover_left_border: false,
             hover_right_border: false,
             text_line_width: 80,
+            preview_cursor: 0,
+            hotkeys_locked: true,
+            preview_hscroll: 0,
         }
     }
 
@@ -219,53 +225,25 @@ impl App {
 
     pub fn get_sel_text(&self, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
         let text = self.current_text();
-        let line_w = (self.text_line_width as usize).max(1);
         let (sx, sy, ex, ey) = if (y1, x1) <= (y2, x2) {
             (x1 as usize, y1 as usize, x2 as usize, y2 as usize)
         } else {
             (x2 as usize, y2 as usize, x1 as usize, y1 as usize)
         };
-
         let logical: Vec<&str> = text.lines().collect();
-        let mut screen: Vec<(usize, usize)> = Vec::new();
-        for (li, line) in logical.iter().enumerate() {
-            let mut offset = 0;
-            loop {
-                let remaining = &line[offset..];
-                screen.push((li, offset));
-                if remaining.len() <= line_w { break; }
-                offset += Self::char_boundary(remaining, line_w);
-                if offset >= line.len() { break; }
-            }
-        }
-
-        let get_info = |scr: usize| -> (&str, usize, usize) {
-            if scr >= screen.len() {
-                let &(li, off) = screen.last().unwrap_or(&(0, 0));
-                (logical.get(li).copied().unwrap_or(""), li, off)
-            } else {
-                let (li, off) = screen[scr];
-                (logical.get(li).copied().unwrap_or(""), li, off)
-            }
-        };
-
-        let (l1, li1, lo1) = get_info(sy);
-        let (_l2, li2, lo2) = get_info(ey);
-
-        let c1 = lo1 + sx;
-        let c2 = lo2 + ex;
-
-        if li1 == li2 {
-            let s = Self::char_boundary(l1, c1);
-            let e = Self::char_boundary(l1, c2).max(s);
-            return l1[s..e].to_string();
+        if sy >= logical.len() { return String::new(); }
+        if sy == ey {
+            let line = logical[sy];
+            let s = Self::char_boundary(line, sx);
+            let e = Self::char_boundary(line, ex).max(s);
+            return line[s..e].to_string();
         }
         let mut r = String::new();
-        for li in li1..=li2 {
+        for li in sy..=ey.min(logical.len().saturating_sub(1)) {
             if !r.is_empty() { r.push('\n'); }
             let line = logical[li];
-            if li == li1 { r.push_str(&line[Self::char_boundary(line, c1)..]); }
-            else if li == li2 { r.push_str(&line[..Self::char_boundary(line, c2)]); }
+            if li == sy { r.push_str(&line[Self::char_boundary(line, sx)..]); }
+            else if li == ey { r.push_str(&line[..Self::char_boundary(line, ex)]); }
             else { r.push_str(line); }
         }
         r
