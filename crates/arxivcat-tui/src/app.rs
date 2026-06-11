@@ -33,6 +33,8 @@ pub struct App {
     pub sel_start: Option<(u16, u16)>,
     pub sel_end: Option<(u16, u16)>,
     pub just_selected: bool,
+    pub mouse_col: u16,
+    pub mouse_row: u16,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -89,6 +91,8 @@ impl App {
             sel_start: None,
             sel_end: None,
             just_selected: false,
+            mouse_col: 0,
+            mouse_row: 0,
         }
     }
 

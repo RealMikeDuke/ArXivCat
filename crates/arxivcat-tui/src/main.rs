@@ -105,6 +105,8 @@ async fn run_app<B: Backend>(
 
 async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::Result<()> {
     let (col, row) = (mouse.column, mouse.row);
+    app.mouse_col = col;
+    app.mouse_row = row;
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -548,6 +550,13 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
+    let hovered = in_rect(area, app.mouse_col, app.mouse_row);
+    let border_style = if hovered {
+        Style::default().fg(Color::Rgb(108, 112, 134))
+    } else {
+        Style::default().fg(Color::Rgb(49, 50, 68))
+    };
+
     let items: Vec<ListItem> = app
         .papers
         .iter()
@@ -560,10 +569,18 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 "·"
             };
-            let style = if i == app.paper_list_selected {
+            let is_selected = i == app.paper_list_selected;
+            let is_hovered = app.mouse_row as usize == area.y as usize + 1 + i;
+
+            let style = if is_selected {
                 Style::default()
                     .fg(Color::Rgb(205, 214, 244))
                     .bg(Color::Rgb(69, 71, 90))
+            } else if is_hovered {
+                Style::default()
+                    .fg(Color::Rgb(137, 180, 250))
+                    .bg(Color::Rgb(49, 50, 68))
+                    .add_modifier(ratatui::style::Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Rgb(166, 173, 200))
             };
@@ -575,7 +592,7 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .title(" Papers ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+            .border_style(border_style),
     );
     f.render_stateful_widget(
         list,
@@ -587,18 +604,43 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_preview(f: &mut Frame, app: &App, area: Rect, tab_area: Rect) {
-    let mode_label = match app.view_mode {
-        ViewMode::Body => " Body ",
-        ViewMode::Appendix => " Appendix ",
-        ViewMode::Note => " Note ",
-        ViewMode::Description => " Description ",
-    };
-    let tab_widget = Paragraph::new(mode_label).style(
-        Style::default()
-            .fg(Color::Rgb(137, 180, 250))
-            .bg(Color::Rgb(49, 50, 68)),
-    );
-    f.render_widget(tab_widget, tab_area);
+    let tab_labels = [" Body ", " Appendix ", " Note ", " Description "];
+    let tab_widths = [7u16, 11u16, 7u16, 14u16];
+
+    let mut tab_x = tab_area.x;
+    for i in 0..4 {
+        let w = tab_widths[i];
+        let tab_rect = Rect::new(tab_x, tab_area.y, w, 1);
+        let is_active = i == app.view_mode as usize;
+        let is_hovered = app.mouse_col >= tab_rect.x
+            && app.mouse_col < tab_rect.x + tab_rect.width
+            && app.mouse_row == tab_rect.y;
+
+        let style = if is_active {
+            Style::default()
+                .fg(Color::Rgb(30, 30, 46))
+                .bg(Color::Rgb(137, 180, 250))
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else if is_hovered {
+            Style::default()
+                .fg(Color::Rgb(205, 214, 244))
+                .bg(Color::Rgb(69, 71, 90))
+        } else {
+            Style::default()
+                .fg(Color::Rgb(108, 112, 134))
+                .bg(Color::Rgb(30, 30, 46))
+        };
+
+        let label = if is_hovered && !is_active {
+            format!(" {} ", tab_labels[i].trim())
+        } else {
+            tab_labels[i].to_string()
+        };
+
+        let tab = Paragraph::new(label).style(style);
+        f.render_widget(tab, tab_rect);
+        tab_x += w;
+    }
 
     let text = if app.current_paper.is_some() {
         app.current_text()
@@ -610,13 +652,19 @@ fn render_preview(f: &mut Frame, app: &App, area: Rect, tab_area: Rect) {
 
     let char_count = content.chars().count();
     let lines = content.lines().count();
+    let hovered_preview = in_rect(area, app.mouse_col, app.mouse_row);
+    let border_style = if hovered_preview {
+        Style::default().fg(Color::Rgb(108, 112, 134))
+    } else {
+        Style::default().fg(Color::Rgb(49, 50, 68))
+    };
     let p = Paragraph::new(content)
         .block(
             Block::default()
                 .title(format!(" {} chars · {} lines ", char_count, lines))
                 .title_bottom(" scroll ↑↓/wheel ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+                .border_style(border_style),
         )
         .wrap(Wrap { trim: false })
         .scroll((app.preview_scroll, 0));
@@ -629,6 +677,13 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(3)])
         .split(area);
     let messages_area = inner[0];
+
+    let hovered_chat = in_rect(area, app.mouse_col, app.mouse_row);
+    let chat_border = if hovered_chat {
+        Style::default().fg(Color::Rgb(108, 112, 134))
+    } else {
+        Style::default().fg(Color::Rgb(49, 50, 68))
+    };
 
     let model_line = format!(
         " Chat [{}] {} ",
@@ -653,7 +708,7 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
         Block::default()
             .title(model_line)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+            .border_style(chat_border),
     );
     f.render_widget(chat_list, messages_area);
 
@@ -663,23 +718,35 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
         "> ",
         app.input_mode == InputMode::Chat,
     );
+    let input_hovered = app.mouse_col >= input_area.x + 1
+        && app.mouse_col < input_area.x + input_area.width
+        && app.mouse_row >= input_area.y
+        && app.mouse_row < input_area.y + input_area.height;
     let input_style = if app.input_mode == InputMode::Chat {
         Style::default()
             .fg(Color::Rgb(205, 214, 244))
             .bg(Color::Rgb(49, 50, 68))
+    } else if input_hovered {
+        Style::default()
+            .fg(Color::Rgb(166, 173, 200))
+            .bg(Color::Rgb(40, 40, 56))
     } else {
         Style::default().fg(Color::Rgb(108, 112, 134))
+    };
+
+    let input_border_color = if app.input_mode == InputMode::Chat {
+        Color::Rgb(137, 180, 250)
+    } else if input_hovered {
+        Color::Rgb(108, 112, 134)
+    } else {
+        Color::Rgb(49, 50, 68)
     };
     let input = Paragraph::new(input_display)
         .style(input_style)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if app.input_mode == InputMode::Chat {
-                    Color::Rgb(137, 180, 250)
-                } else {
-                    Color::Rgb(49, 50, 68)
-                })),
+                .border_style(Style::default().fg(input_border_color)),
         );
     f.render_widget(input, input_area);
 }
@@ -707,8 +774,13 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
             "[{mode}] ↑↓/scroll/jk:nav 1-4:view{chat_hint} e:edit s:scan d:dl o:open p:pdf ::cmd q:quit  ?:help",
         ))
     };
+    let hovered_status = in_rect(area, app.mouse_col, app.mouse_row);
     let status = Paragraph::new(status_text)
-        .style(Style::default().fg(Color::Rgb(166, 173, 200)))
+        .style(if hovered_status {
+            Style::default().fg(Color::Rgb(205, 214, 244))
+        } else {
+            Style::default().fg(Color::Rgb(166, 173, 200))
+        })
         .block(
             Block::default()
                 .borders(Borders::TOP)
