@@ -145,7 +145,8 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if in_rect(rects.chat_input, col, row) {
                 app.show_chat = true;
                 app.input_mode = InputMode::Chat;
-                app.chat_cursor = col.saturating_sub(rects.chat_input.x + 2).min(app.chat_input.len() as u16) as usize;
+                let raw = col.saturating_sub(rects.chat_input.x + 2).min(app.chat_input.len() as u16) as usize;
+                app.chat_cursor = cb(&app.chat_input, raw);
             } else if in_rect(rects.chat, col, row) {
                 app.show_chat = true;
                 app.input_mode = InputMode::Chat;
@@ -161,7 +162,6 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                         let line_start: usize = lines.iter().take(rel_y as usize).map(|l| l.len() + 1).sum();
                         line_start + rel_x.min(lines[rel_y as usize].len() as u16).saturating_sub(1) as usize
                     } else { 0 };
-                    let cb = |s: &str, idx: usize| { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j };
                     app.preview_cursor = cb(text, byte_pos);
                     app.selecting = true;
                     app.sel_start = Some((rel_x, rel_y));
@@ -235,8 +235,8 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             }
             KeyCode::Backspace => { if app.chat_cursor > 0 { app.chat_cursor -= 1; app.chat_input.remove(app.chat_cursor); } }
             KeyCode::Delete => { if app.chat_cursor < app.chat_input.len() { app.chat_input.remove(app.chat_cursor); } }
-            KeyCode::Left => app.chat_cursor = app.chat_cursor.saturating_sub(1),
-            KeyCode::Right => app.chat_cursor = (app.chat_cursor + 1).min(app.chat_input.len()),
+            KeyCode::Left => app.chat_cursor = cb(&app.chat_input, app.chat_cursor.saturating_sub(1)),
+            KeyCode::Right => app.chat_cursor = cb(&app.chat_input, app.chat_cursor + 1).min(app.chat_input.len()),
             KeyCode::Home => app.chat_cursor = 0,
             KeyCode::End => app.chat_cursor = app.chat_input.len(),
             KeyCode::Char(c) => { app.chat_input.insert(app.chat_cursor, c); app.chat_cursor += 1; }
@@ -359,14 +359,13 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::Left => {
                 let t = app.current_text().to_string();
                 let mut c = app.preview_cursor;
-                if c > 0 { c -= 1; while c > 0 && !t.is_char_boundary(c) { c -= 1; } }
+                if c > 0 { c = cb(&t, c.saturating_sub(1)); }
                 app.preview_cursor = c;
             }
             KeyCode::Right => {
                 let t = app.current_text().to_string();
-                let mut c = app.preview_cursor;
-                if c < t.len() { c += 1; while c < t.len() && !t.is_char_boundary(c) { c += 1; } }
-                app.preview_cursor = c;
+                let c = app.preview_cursor;
+                app.preview_cursor = cb(&t, c + 1);
             }
             KeyCode::Up => {
                 let t = app.current_text().to_string();
@@ -529,7 +528,7 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
             else { (ex as usize, ey as usize, sx as usize, sy as usize) }
         } else { (0, 0, 0, 0) };
 
-        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); if i == s.len() { return i; } let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
+        fn __cb(s: &str, idx: usize) -> usize { cb(s, idx) }
 
         let lines: Vec<TLine> = content.lines().enumerate().map(|(li, line)| {
             let cur_start = if app.current_paper.is_some() { app.preview_cursor } else { usize::MAX };
@@ -654,14 +653,23 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn build_cursor_text(text: &str, cursor: usize, prefix: &str, active: bool) -> ratatui::text::Text<'static> {
     if !active { return ratatui::text::Text::from(format!("{prefix}{text}")); }
+    let cur = cb(text, cursor);
     let mut spans: Vec<Span<'static>> = vec![Span::raw(prefix.to_string())];
-    let before = &text[..cursor.min(text.len())];
-    let cur_char = if cursor < text.len() { text[cursor..].chars().next().unwrap_or(' ') } else { ' ' };
-    let after = if cursor < text.len() { let rest = &text[cursor..]; let l = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(0); &rest[l..] } else { "" };
+    let before = &text[..cur];
+    let cur_char = if cur < text.len() { text[cur..].chars().next().unwrap_or(' ') } else { ' ' };
+    let after = if cur < text.len() { let rest = &text[cur..]; let l = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(0); &rest[l..] } else { "" };
     spans.push(Span::raw(before.to_string()));
     spans.push(Span::styled(cur_char.to_string(), Style::default().fg(Color::Rgb(30, 30, 46)).bg(Color::Rgb(137, 180, 250))));
     if !after.is_empty() { spans.push(Span::raw(after.to_string())); }
     ratatui::text::Text::from(TLine::from(spans))
+}
+
+fn cb(s: &str, idx: usize) -> usize {
+    let i = idx.min(s.len());
+    if i == s.len() || s.is_char_boundary(i) { return i; }
+    let mut j = i;
+    while j > 0 && !s.is_char_boundary(j) { j -= 1; }
+    j
 }
 
 fn is_ctrl(key: &event::KeyEvent) -> bool {
