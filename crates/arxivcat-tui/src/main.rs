@@ -180,11 +180,10 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             if app.selecting {
                 app.selecting = false;
                 if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
-                    let text = app.current_text();
                     let (sx, sy) = start;
                     let (ex, ey) = end;
                     let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
-                    let content = get_selected(text, x1, y1, x2, y2);
+                    let content = app.get_sel_text(x1, y1, x2, y2);
                     if !content.is_empty() { copy_to_clipboard(&content); app.just_selected = true; }
                 }
                 app.sel_start = None;
@@ -195,27 +194,6 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
         _ => {}
     }
     Ok(())
-}
-
-fn get_selected(text: &str, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let (x1, y1, x2, y2) = (x1 as usize, y1 as usize, x2 as usize, y2 as usize);
-    if y1 >= lines.len() { return String::new(); }
-    if y1 == y2 {
-        let line = lines[y1];
-        let s = x1.min(line.len());
-        let e = x2.min(line.len()).max(s);
-        return line[s..e].to_string();
-    }
-    let mut r = String::new();
-    for yi in y1..=y2.min(lines.len().saturating_sub(1)) {
-        if !r.is_empty() { r.push('\n'); }
-        let line = lines[yi];
-        if yi == y1 { let s = x1.min(line.len()); r.push_str(&line[s..]); }
-        else if yi == y2 { let e = x2.min(line.len()); r.push_str(&line[..e]); }
-        else { r.push_str(line); }
-    }
-    r
 }
 
 fn copy_to_clipboard(text: &str) {
@@ -405,11 +383,13 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn render_preview(f: &mut Frame, app: &App, text_area: Rect, tab_area: Rect) {
+fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect) {
+    app.text_line_width = text_area.width.saturating_sub(2);
     let text = if app.current_paper.is_some() { app.current_text() } else { "← Click a paper or press Enter to load" };
     let content = if text.is_empty() { "(empty)" } else { text };
 
     let styled: ratatui::text::Text = if app.selecting && app.sel_start.is_some() && app.current_paper.is_some() && !text.is_empty() {
+        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
         let (sx, sy) = app.sel_start.unwrap();
         let (ex, ey) = app.sel_end.unwrap_or((sx, sy));
         let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) { (sx as usize, sy as usize, ex as usize, ey as usize) }
@@ -418,9 +398,9 @@ fn render_preview(f: &mut Frame, app: &App, text_area: Rect, tab_area: Rect) {
         let sel = Style::default().fg(Color::Rgb(205, 214, 244)).bg(Color::Rgb(69, 71, 90));
         let lines: Vec<TLine> = content.lines().enumerate().map(|(li, line)| {
             if li < y1 || li > y2 { return TLine::from(Span::styled(line.to_string(), normal)); }
-            let sc = if li == y1 { x1 } else { 0 };
-            let ec = if li == y2 { x2 } else { line.len() };
-            let s = sc.min(line.len()); let e = ec.min(line.len());
+            let sc = if li == y1 { cb(line, x1) } else { 0 };
+            let ec = if li == y2 { cb(line, x2) } else { line.len() };
+            let s = sc.min(line.len()); let e = ec.min(line.len()).max(s);
             let mut spans = Vec::new();
             if s > 0 { spans.push(Span::styled(line[..s].to_string(), normal)); }
             if e > s { spans.push(Span::styled(line[s..e].to_string(), sel)); }
