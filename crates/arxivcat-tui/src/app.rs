@@ -35,6 +35,9 @@ pub struct App {
     pub just_selected: bool,
     pub mouse_col: u16,
     pub mouse_row: u16,
+    pub left_width_pct: u16,
+    pub right_width_pct: u16,
+    pub dragging_border: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -93,6 +96,9 @@ impl App {
             just_selected: false,
             mouse_col: 0,
             mouse_row: 0,
+            left_width_pct: 25,
+            right_width_pct: 35,
+            dragging_border: None,
         }
     }
 
