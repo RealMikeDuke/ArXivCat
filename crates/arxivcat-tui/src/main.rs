@@ -529,32 +529,33 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
             else { (ex as usize, ey as usize, sx as usize, sy as usize) }
         } else { (0, 0, 0, 0) };
 
-        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
+        fn cb(s: &str, idx: usize) -> usize { let i = idx.min(s.len()); if i == s.len() { return i; } let mut j = i; while j > 0 && !s.is_char_boundary(j) { j -= 1; } j }
 
         let lines: Vec<TLine> = content.lines().enumerate().map(|(li, line)| {
             let cur_start = if app.current_paper.is_some() { app.preview_cursor } else { usize::MAX };
             let total_before: usize = content.lines().take(li).map(|l| l.len() + 1).sum();
             let cursor_in_line = if cur_start >= total_before && cur_start < total_before + line.len() + 1 {
-                Some(cur_start - total_before)
+                let c = cur_start - total_before;
+                Some(cb(line, c))
             } else { None };
 
             let in_sel = has_sel && li >= y1 && li <= y2;
-            let sel_start = if li == y1 { cb(line, x1) } else { 0 };
-            let sel_end = if li == y2 { cb(line, x2) } else { line.len() };
+            let sel_start_cb = if li == y1 { cb(line, x1) } else { 0 };
+            let sel_end_cb = if li == y2 { cb(line, x2) } else { line.len() };
 
             let mut spans: Vec<Span> = Vec::new();
             let mut pos = 0;
             while pos < line.len() {
-                let sel_in_range = in_sel && pos >= sel_start && pos < sel_end;
+                let sel_in_range = in_sel && pos >= sel_start_cb && pos < sel_end_cb;
 
                 let mut end = line.len();
-                if let Some(cp) = cursor_in_line { if cp > pos && cp < end { end = cp; } }
+                if let Some(cp) = cursor_in_line { if cp > pos && cp < end { end = cb(line, cp); } }
                 if in_sel && sel_in_range {
-                    if sel_end > pos && sel_end < end { end = sel_end; }
+                    if sel_end_cb > pos && sel_end_cb < end { end = cb(line, sel_end_cb); }
                 } else {
-                    if sel_start > pos && sel_start < end { end = sel_start; }
+                    if sel_start_cb > pos && sel_start_cb < end { end = cb(line, sel_start_cb); }
                 }
-                // Find next cursor position
+                // Show cursor if at this position
                 if let Some(cp) = cursor_in_line {
                     if cp == pos {
                         let ch = line[cp..].chars().next().unwrap_or(' ');
@@ -565,11 +566,10 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
                     }
                 }
 
-                let style = if in_sel && pos >= sel_start && pos < sel_end { sel_style } else { normal };
+                let style = if in_sel && pos >= sel_start_cb && pos < sel_end_cb { sel_style } else { normal };
                 spans.push(Span::styled(line[pos..end].to_string(), style));
                 pos = end;
             }
-            // Handle cursor at end of line
             if let Some(cp) = cursor_in_line {
                 if cp >= line.len() {
                     spans.push(Span::styled(" ".to_string(), cursor_style));
