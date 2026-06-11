@@ -21,12 +21,18 @@ pub struct App {
     #[allow(dead_code)]
     pub chat_streaming: bool,
     pub chat_model: String,
+    pub chat_cursor: usize,
+    pub cmd_cursor: usize,
     pub deep_thinking: bool,
     pub log_lines: Vec<String>,
     pub status: String,
     pub input_mode: InputMode,
     pub quit: bool,
     pub workspace_path_str: String,
+    pub selecting: bool,
+    pub sel_start: Option<(u16, u16)>,
+    pub sel_end: Option<(u16, u16)>,
+    pub just_selected: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -71,12 +77,18 @@ impl App {
             chat_scroll: 0,
             chat_streaming: false,
             chat_model: model,
+            chat_cursor: 0,
+            cmd_cursor: 1,
             deep_thinking: true,
             log_lines: Vec::new(),
             status: String::from("Press ? for help, q to quit"),
             input_mode: InputMode::Normal,
             quit: false,
             workspace_path_str: String::new(),
+            selecting: false,
+            sel_start: None,
+            sel_end: None,
+            just_selected: false,
         }
     }
 

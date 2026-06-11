@@ -78,6 +78,10 @@ async fn run_app<B: Backend>(
     loop {
         terminal.draw(|f| rects = ui(f, app))?;
 
+        if app.just_selected {
+            app.just_selected = false;
+        }
+
         if app.quit {
             break;
         }
@@ -109,7 +113,6 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if rects.three_pane && in_rect(rects.chat, col, row) {
                 app.chat_scroll = app.chat_scroll.saturating_add(3);
             } else if in_rect(rects.paper_list, col, row) {
-                app.paper_list_scroll = app.paper_list_scroll.saturating_add(1);
                 if !app.papers.is_empty() {
                     let max = app.papers.len().saturating_sub(1);
                     app.paper_list_selected = (app.paper_list_selected + 1).min(max);
@@ -122,50 +125,124 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if rects.three_pane && in_rect(rects.chat, col, row) {
                 app.chat_scroll = app.chat_scroll.saturating_sub(3);
             } else if in_rect(rects.paper_list, col, row) {
-                app.paper_list_scroll = app.paper_list_scroll.saturating_sub(1);
                 app.paper_list_selected = app.paper_list_selected.saturating_sub(1);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            app.just_selected = false;
             if in_rect(rects.paper_list, col, row) {
-                let rel_row = row.saturating_sub(rects.paper_list.y);
-                let idx = app.paper_list_scroll + rel_row as usize;
+                let rel_row = row.saturating_sub(rects.paper_list.y + 1);
+                let idx = rel_row as usize;
                 if idx < app.papers.len() {
                     app.paper_list_selected = idx;
                     app.load_paper(idx);
                 }
-            }
-            if in_rect(rects.preview_tabs, col, row) {
+            } else if in_rect(rects.preview_tabs, col, row) {
                 let rel_col = col.saturating_sub(rects.preview_tabs.x);
                 let tab_idx = (rel_col / 12).min(3) as usize;
-                let views = [ViewMode::Body, ViewMode::Appendix, ViewMode::Note, ViewMode::Description];
+                let views = [
+                    ViewMode::Body,
+                    ViewMode::Appendix,
+                    ViewMode::Note,
+                    ViewMode::Description,
+                ];
                 app.view_mode = views[tab_idx];
-            }
-            if rects.three_pane && in_rect(rects.chat_input, col, row) {
-                app.input_mode = InputMode::Chat;
+            } else if in_rect(rects.chat_input, col, row) && rects.three_pane {
                 app.show_chat = true;
-            }
-            if rects.three_pane && in_rect(rects.chat, col, row) {
                 app.input_mode = InputMode::Chat;
-            }
-            if in_rect(rects.preview, col, row) {
-                if app.input_mode == InputMode::Chat {
-                    app.input_mode = InputMode::Normal;
-                }
+                let prefix = 2u16;
+                app.chat_cursor = col
+                    .saturating_sub(rects.chat_input.x + prefix)
+                    .min(app.chat_input.len() as u16) as usize;
+            } else if in_rect(rects.chat, col, row) && rects.three_pane {
+                app.show_chat = true;
+                app.input_mode = InputMode::Chat;
+            } else if in_rect(rects.preview, col, row) && app.input_mode == InputMode::Chat {
+                app.input_mode = InputMode::Normal;
+            } else if in_rect(rects.preview, col, row) {
+                app.selecting = true;
+                let rel_y = row.saturating_sub(rects.preview.y + 2);
+                let rel_x = col.saturating_sub(rects.preview.x + 1);
+                app.sel_start = Some((rel_x, rel_y));
+                app.sel_end = None;
+                app.preview_scroll = 0;
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            if in_rect(rects.preview, col, row) {
-                let dy = mouse.row as i32 - rects.preview.y as i32 - 2;
-                if dy >= 0 {
-                    app.preview_scroll = (dy as u16).max(0);
+            if app.selecting && in_rect(rects.preview, col, row) {
+                let rel_y = row.saturating_sub(rects.preview.y + 2);
+                let rel_x = col.saturating_sub(rects.preview.x + 1);
+                app.sel_end = Some((rel_x, rel_y));
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if app.selecting {
+                app.selecting = false;
+                if let (Some(start), Some(end)) = (app.sel_start, app.sel_end) {
+                    let text = app.current_text();
+                    let (sx, sy) = start;
+                    let (ex, ey) = end;
+                    let (x1, y1, x2, y2) = if (sy, sx) <= (ey, ex) {
+                        (sx, sy, ex, ey)
+                    } else {
+                        (ex, ey, sx, sy)
+                    };
+                    let content = get_selected_text(text, x1 as usize, y1 as usize, x2 as usize, y2 as usize);
+                    if !content.is_empty() {
+                        copy_to_clipboard(&content);
+                        app.just_selected = true;
+                    }
                 }
+                app.sel_start = None;
+                app.sel_end = None;
             }
         }
         _ => {}
     }
 
     Ok(())
+}
+
+fn get_selected_text(
+    text: &str,
+    x1: usize,
+    y1: usize,
+    x2: usize,
+    y2: usize,
+) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if y1 >= lines.len() {
+        return String::new();
+    }
+    if y1 == y2 {
+        let line = lines[y1];
+        let start = x1.min(line.len());
+        let end = x2.min(line.len()).max(start);
+        return line[start..end].to_string();
+    }
+    let mut result = String::new();
+    for yi in y1..=y2.min(lines.len().saturating_sub(1)) {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        let line = lines[yi];
+        if yi == y1 {
+            let s = x1.min(line.len());
+            result.push_str(&line[s..]);
+        } else if yi == y2 {
+            let e = x2.min(line.len());
+            result.push_str(&line[..e]);
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+fn copy_to_clipboard(text: &str) {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text);
+    }
 }
 
 fn in_rect(r: Rect, col: u16, row: u16) -> bool {
@@ -180,8 +257,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                 app.show_chat = false;
             }
             KeyCode::Enter => {
-                let msg = app.chat_input.clone();
-                app.chat_input.clear();
+                let msg = std::mem::take(&mut app.chat_input);
                 if !msg.is_empty() {
                     app.chat_messages.push(app::ChatMsg {
                         speaker: "user".to_string(),
@@ -189,12 +265,30 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                     });
                     app.add_log("sending...");
                 }
+                app.chat_cursor = 0;
             }
             KeyCode::Backspace => {
-                app.chat_input.pop();
+                if app.chat_cursor > 0 {
+                    app.chat_cursor -= 1;
+                    app.chat_input.remove(app.chat_cursor);
+                }
             }
+            KeyCode::Delete => {
+                if app.chat_cursor < app.chat_input.len() {
+                    app.chat_input.remove(app.chat_cursor);
+                }
+            }
+            KeyCode::Left => {
+                app.chat_cursor = app.chat_cursor.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                app.chat_cursor = (app.chat_cursor + 1).min(app.chat_input.len());
+            }
+            KeyCode::Home => app.chat_cursor = 0,
+            KeyCode::End => app.chat_cursor = app.chat_input.len(),
             KeyCode::Char(c) => {
-                app.chat_input.push(c);
+                app.chat_input.insert(app.chat_cursor, c);
+                app.chat_cursor += 1;
             }
             _ => {}
         },
@@ -222,11 +316,14 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             KeyCode::Esc => {
                 app.input_mode = InputMode::Normal;
                 app.status.clear();
+                app.cmd_cursor = 1;
             }
             KeyCode::Enter => {
                 let cmd = std::mem::take(&mut app.status);
+                let cmd_body = cmd.strip_prefix(':').unwrap_or("").to_string();
+                app.cmd_cursor = 1;
                 app.input_mode = InputMode::Normal;
-                match cmd.as_str() {
+                match cmd_body.as_str() {
                     "o" | "open" => {
                         if let Some(ref paper) = app.current_paper {
                             let _ = open::that(&paper.folder);
@@ -256,14 +353,31 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                         app.deep_thinking = !app.deep_thinking;
                         app.add_log(&format!("deep thinking: {}", app.deep_thinking));
                     }
-                    _ => app.add_log(&format!("unknown: {cmd}. try: open, pdf, scan, dl, model, think")),
+                    _ => app.add_log(&format!("unknown: {cmd_body}. try: open, pdf, scan, dl, model, think")),
                 }
             }
-            KeyCode::Char(c) => {
-                app.status.push(c);
-            }
             KeyCode::Backspace => {
-                app.status.pop();
+                if app.cmd_cursor > 1 {
+                    app.cmd_cursor -= 1;
+                    app.status.remove(app.cmd_cursor);
+                }
+            }
+            KeyCode::Delete => {
+                if app.cmd_cursor < app.status.len() {
+                    app.status.remove(app.cmd_cursor);
+                }
+            }
+            KeyCode::Left => {
+                app.cmd_cursor = (app.cmd_cursor.saturating_sub(1)).max(1);
+            }
+            KeyCode::Right => {
+                app.cmd_cursor = (app.cmd_cursor + 1).min(app.status.len());
+            }
+            KeyCode::Home => app.cmd_cursor = 1,
+            KeyCode::End => app.cmd_cursor = app.status.len(),
+            KeyCode::Char(c) => {
+                app.status.insert(app.cmd_cursor, c);
+                app.cmd_cursor += 1;
             }
             _ => {}
         },
@@ -543,13 +657,11 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
     );
     f.render_widget(chat_list, messages_area);
 
-    let input_text = format!(
-        "> {}",
-        if app.chat_input.is_empty() {
-            "type here..."
-        } else {
-            &app.chat_input
-        }
+    let input_display = build_cursor_text(
+        &app.chat_input,
+        app.chat_cursor,
+        "> ",
+        app.input_mode == InputMode::Chat,
     );
     let input_style = if app.input_mode == InputMode::Chat {
         Style::default()
@@ -558,7 +670,7 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
     } else {
         Style::default().fg(Color::Rgb(108, 112, 134))
     };
-    let input = Paragraph::new(input_text)
+    let input = Paragraph::new(input_display)
         .style(input_style)
         .block(
             Block::default()
@@ -579,17 +691,21 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         InputMode::NoteEdit => "EDIT",
         InputMode::Command => "CMD",
     };
-    let status_text = if !app.status.is_empty() {
-        app.status.clone()
+    let status_text: ratatui::text::Text = if app.input_mode == InputMode::Command {
+        build_cursor_text(&app.status, app.cmd_cursor, "", true)
+    } else if app.just_selected {
+        ratatui::text::Text::from("[copied to clipboard]")
+    } else if !app.status.is_empty() {
+        ratatui::text::Text::from(app.status.as_str())
     } else {
         let chat_hint = if app.current_paper.is_some() {
             " | c:chat"
         } else {
             ""
         };
-        format!(
+        ratatui::text::Text::from(format!(
             "[{mode}] ↑↓/scroll/jk:nav 1-4:view{chat_hint} e:edit s:scan d:dl o:open p:pdf ::cmd q:quit  ?:help",
-        )
+        ))
     };
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(Color::Rgb(166, 173, 200)))
@@ -599,4 +715,59 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
                 .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
         );
     f.render_widget(status, area);
+}
+
+fn build_cursor_text(
+    text: &str,
+    cursor: usize,
+    prefix: &str,
+    active: bool,
+) -> ratatui::text::Text<'static> {
+    use ratatui::text::Span;
+
+    if !active {
+        return ratatui::text::Text::from(format!("{prefix}{text}"));
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::raw(prefix.to_string()));
+
+    let before = &text[..cursor.min(text.len())];
+    let cursor_char = if cursor < text.len() {
+        text[cursor..].chars().next().unwrap_or(' ')
+    } else {
+        ' '
+    };
+    let after = if cursor < text.len() {
+        let rest = &text[cursor..];
+        let first_char_len = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+        &rest[first_char_len..]
+    } else {
+        ""
+    };
+
+    spans.push(Span::raw(before.to_string()));
+
+    let cursor_span = if cursor < text.len() {
+        Span::styled(
+            cursor_char.to_string(),
+            Style::default()
+                .fg(Color::Rgb(30, 30, 46))
+                .bg(Color::Rgb(137, 180, 250)),
+        )
+    } else {
+        Span::styled(
+            " ".to_string(),
+            Style::default()
+                .fg(Color::Rgb(30, 30, 46))
+                .bg(Color::Rgb(137, 180, 250)),
+        )
+    };
+    spans.push(cursor_span);
+
+    if !after.is_empty() {
+        spans.push(Span::raw(after.to_string()));
+    }
+
+    ratatui::text::Text::from(ratatui::text::Line::from(spans))
 }
