@@ -154,20 +154,15 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                 if app.input_mode == InputMode::Chat { app.input_mode = InputMode::Normal; }
                 else {
                     let rel_x = col.saturating_sub(rects.preview_text.x + 1);
-                    let rel_y = row.saturating_sub(rects.preview_text.y + 1) + app.preview_scroll;
-                    let text = app.current_text();
-                    let lines: Vec<&str> = text.lines().collect();
-                    let byte_pos = if (rel_y as usize) < lines.len() {
-                        let line_start: usize = lines.iter().take(rel_y as usize).map(|l| l.len() + 1).sum();
-                        let char_idx = (rel_x as usize).saturating_sub(1);
-                        let line = lines[rel_y as usize];
-                        let offset = line.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(line.len());
-                        line_start + offset
-                    } else { 0 };
-                    app.preview_cursor = cb(text, byte_pos);
-                    app.selecting = true;
-                    app.sel_start = Some((rel_x, rel_y));
-                    app.sel_end = None;
+                    let rel_y = row.saturating_sub(rects.preview_text.y + 1);
+                    if let Some(byte_pos) = app.screen_to_byte(rel_y, rel_x) {
+                        let text = app.current_text();
+                        app.preview_cursor = cb(text, byte_pos);
+                        app.selecting = true;
+                        // Store screen coordinates for selection (not scroll-adjusted — screen_map handles it)
+                        app.sel_start = Some((rel_x, rel_y));
+                        app.sel_end = None;
+                    }
                 }
             }
         }
@@ -184,7 +179,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                     app.right_width_pct = pct;
                 }
             } else if app.selecting && in_rect(rects.preview_text, col, row) {
-                app.sel_end = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1) + app.preview_scroll));
+                app.sel_end = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1)));
             }
         }
 
@@ -520,6 +515,7 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect) {
     app.text_line_width = text_area.width.saturating_sub(2);
+    app.build_screen_map(app.text_line_width);
     let text = if app.current_paper.is_some() { app.current_text() } else { "← Click a paper or press Enter to load" };
     let content = if text.is_empty() { "(empty)" } else { text };
 
@@ -534,12 +530,18 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
         let cursor_style = Style::default().fg(Color::Rgb(30, 30, 46)).bg(Color::Rgb(137, 180, 250));
         let sel_style = Style::default().fg(Color::Rgb(205, 214, 244)).bg(Color::Rgb(69, 71, 90));
 
-        let has_sel = app.selecting && app.sel_start.is_some();
-        let (x1, y1, x2, y2) = if has_sel {
+        let has_sel = app.sel_start.is_some() && app.sel_end.is_some();
+        let (sel_li1, sel_b1, sel_li2, sel_b2) = if has_sel {
             let (sx, sy) = app.sel_start.unwrap();
-            let (ex, ey) = app.sel_end.unwrap_or((sx, sy));
-            if (sy, sx) <= (ey, ex) { (sx as usize, sy as usize, ex as usize, ey as usize) }
-            else { (ex as usize, ey as usize, sx as usize, sy as usize) }
+            let (ex, ey) = app.sel_end.unwrap();
+            let (sx, sy, ex, ey) = if (sy, sx) <= (ey, ex) { (sx, sy, ex, ey) } else { (ex, ey, sx, sy) };
+            let m1 = app.screen_map.get((sy + app.preview_scroll) as usize).copied().unwrap_or((0, 0));
+            let m2 = app.screen_map.get((ey + app.preview_scroll) as usize).copied().unwrap_or((0, 0));
+            let l1 = content.lines().nth(m1.0).unwrap_or("");
+            let l2 = content.lines().nth(m2.0).unwrap_or("");
+            let c1 = l1.char_indices().nth(sx.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(0);
+            let c2 = l2.char_indices().nth(ex.saturating_sub(1) as usize).map(|(i,_)| i).unwrap_or(l2.len());
+            (m1.0, m1.1 + c1, m2.0, m2.1 + c2)
         } else { (0, 0, 0, 0) };
 
         fn __cb(s: &str, idx: usize) -> usize { cb(s, idx) }
@@ -552,9 +554,9 @@ fn render_preview(f: &mut Frame, app: &mut App, text_area: Rect, tab_area: Rect)
                 Some(cb(line, c))
             } else { None };
 
-            let in_sel = has_sel && li >= y1 && li <= y2;
-            let sel_start_cb = if li == y1 { cb(line, x1) } else { 0 };
-            let sel_end_cb = if li == y2 { cb(line, x2) } else { line.len() };
+            let in_sel = has_sel && li >= sel_li1 && li <= sel_li2;
+            let sel_start_cb = if li == sel_li1 { cb(line, sel_b1) } else { 0 };
+            let sel_end_cb = if li == sel_li2 { cb(line, sel_b2) } else { line.len() };
 
             let mut spans: Vec<Span> = Vec::new();
             let mut pos = 0;

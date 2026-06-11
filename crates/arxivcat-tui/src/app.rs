@@ -44,6 +44,7 @@ pub struct App {
     pub preview_cursor: usize,
     pub hotkeys_locked: bool,
     pub preview_hscroll: u16,
+    pub screen_map: Vec<(usize, usize)>,  // screen_row -> (logical_line_idx, byte_offset)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -111,6 +112,7 @@ impl App {
             preview_cursor: 0,
             hotkeys_locked: true,
             preview_hscroll: 0,
+            screen_map: Vec::new(),
         }
     }
 
@@ -225,27 +227,69 @@ impl App {
 
     pub fn get_sel_text(&self, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
         let text = self.current_text();
+        let logical: Vec<&str> = text.lines().collect();
         let (sx, sy, ex, ey) = if (y1, x1) <= (y2, x2) {
             (x1 as usize, y1 as usize, x2 as usize, y2 as usize)
         } else {
             (x2 as usize, y2 as usize, x1 as usize, y1 as usize)
         };
-        let logical: Vec<&str> = text.lines().collect();
-        if sy >= logical.len() { return String::new(); }
-        if sy == ey {
-            let line = logical[sy];
-            let s = Self::char_boundary(line, sx);
-            let e = Self::char_boundary(line, ex).max(s);
+        let map = |sy: usize, sx: usize| -> (usize, usize) {
+            let idx = sy + self.preview_scroll as usize;
+            let (li, off) = self.screen_map.get(idx).copied().unwrap_or((0, 0));
+            let line = logical.get(li).copied().unwrap_or("");
+            let ci = sx.saturating_sub(1);
+            let cb = line.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(line.len());
+            (li, off + cb)
+        };
+        let (li1, b1) = map(sy, sx);
+        let (li2, b2) = map(ey, ex);
+        if li1 == li2 {
+            let line = logical.get(li1).copied().unwrap_or("");
+            let s = Self::char_boundary(line, b1);
+            let e = Self::char_boundary(line, b2).max(s);
             return line[s..e].to_string();
         }
         let mut r = String::new();
-        for li in sy..=ey.min(logical.len().saturating_sub(1)) {
+        for li in li1..=li2.min(logical.len().saturating_sub(1)) {
             if !r.is_empty() { r.push('\n'); }
             let line = logical[li];
-            if li == sy { r.push_str(&line[Self::char_boundary(line, sx)..]); }
-            else if li == ey { r.push_str(&line[..Self::char_boundary(line, ex)]); }
+            if li == li1 { r.push_str(&line[Self::char_boundary(line, b1)..]); }
+            else if li == li2 { r.push_str(&line[..Self::char_boundary(line, b2)]); }
             else { r.push_str(line); }
         }
         r
+    }
+
+    pub fn screen_to_byte(&self, screen_y: u16, screen_x: u16) -> Option<usize> {
+        let idx = (screen_y + self.preview_scroll) as usize;
+        if idx >= self.screen_map.len() { return None; }
+        let (li, off) = self.screen_map[idx];
+        let text = self.current_text();
+        let logical: Vec<&str> = text.lines().collect();
+        let line = logical.get(li)?;
+        let char_idx = (screen_x as usize).saturating_sub(1);
+        let col_offset = line.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(line.len());
+        let line_start: usize = logical.iter().take(li).map(|l| l.len() + 1).sum();
+        Some(line_start + off + col_offset)
+    }
+
+    pub fn build_screen_map(&mut self, line_width: u16) {
+        let text = self.current_text().to_string();
+        let lw = (line_width.saturating_sub(1) as usize).max(1);
+        self.screen_map.clear();
+        for (li, line) in text.lines().enumerate() {
+            let mut offset = 0;
+            loop {
+                if offset >= line.len() {
+                    self.screen_map.push((li, line.len()));
+                    break;
+                }
+                self.screen_map.push((li, offset));
+                let remaining = &line[offset..];
+                if remaining.len() <= lw { break; }
+                let split = Self::char_boundary(remaining, lw);
+                offset += split;
+            }
+        }
     }
 }
