@@ -153,9 +153,8 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
             } else if in_rect(rects.preview_text, col, row) {
                 if app.input_mode == InputMode::Chat { app.input_mode = InputMode::Normal; }
                 else {
-                    // set cursor at click position
                     let rel_x = col.saturating_sub(rects.preview_text.x + 1);
-                    let rel_y = row.saturating_sub(rects.preview_text.y + 1);
+                    let rel_y = row.saturating_sub(rects.preview_text.y + 1) + app.preview_scroll;
                     let text = app.current_text();
                     let lines: Vec<&str> = text.lines().collect();
                     let byte_pos = if (rel_y as usize) < lines.len() {
@@ -185,7 +184,7 @@ async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::R
                     app.right_width_pct = pct;
                 }
             } else if app.selecting && in_rect(rects.preview_text, col, row) {
-                app.sel_end = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1)));
+                app.sel_end = Some((col.saturating_sub(rects.preview_text.x + 1), row.saturating_sub(rects.preview_text.y + 1) + app.preview_scroll));
             }
         }
 
