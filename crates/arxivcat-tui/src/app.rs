@@ -277,7 +277,7 @@ impl App {
 
     pub fn build_screen_map(&mut self, line_width: u16) {
         let text = self.current_text().to_string();
-        let lw = (line_width.saturating_sub(1) as usize).max(1);
+        let lw = (line_width as usize).max(1);
         self.screen_map.clear();
         for (li, line) in text.lines().enumerate() {
             let mut offset = 0;
