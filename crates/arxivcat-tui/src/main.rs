@@ -5,7 +5,10 @@ use std::io;
 use app::{App, InputMode, ViewMode};
 use arxivcat_core::config;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -13,6 +16,19 @@ use ratatui::{
     prelude::*,
     widgets::*,
 };
+
+/// Layout rects from the last render, used for mouse hit-testing.
+#[derive(Clone, Default)]
+struct Rects {
+    header: Rect,
+    status: Rect,
+    paper_list: Rect,
+    preview: Rect,
+    chat: Rect,
+    preview_tabs: Rect,
+    chat_input: Rect,
+    three_pane: bool,
+}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -58,22 +74,102 @@ async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
+    let mut rects = Rects::default();
     loop {
-        terminal.draw(|f| ui(f, app))?;
+        terminal.draw(|f| rects = ui(f, app))?;
 
         if app.quit {
             break;
         }
 
         if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    handle_key(app, key).await?;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        handle_key(app, key).await?;
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse(app, &mouse, &rects).await?;
+                }
+                _ => {}
             }
         }
     }
     Ok(())
+}
+
+async fn handle_mouse(app: &mut App, mouse: &MouseEvent, rects: &Rects) -> io::Result<()> {
+    let (col, row) = (mouse.column, mouse.row);
+
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            if in_rect(rects.preview, col, row) {
+                app.preview_scroll = app.preview_scroll.saturating_add(3);
+            } else if rects.three_pane && in_rect(rects.chat, col, row) {
+                app.chat_scroll = app.chat_scroll.saturating_add(3);
+            } else if in_rect(rects.paper_list, col, row) {
+                app.paper_list_scroll = app.paper_list_scroll.saturating_add(1);
+                if !app.papers.is_empty() {
+                    let max = app.papers.len().saturating_sub(1);
+                    app.paper_list_selected = (app.paper_list_selected + 1).min(max);
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if in_rect(rects.preview, col, row) {
+                app.preview_scroll = app.preview_scroll.saturating_sub(3);
+            } else if rects.three_pane && in_rect(rects.chat, col, row) {
+                app.chat_scroll = app.chat_scroll.saturating_sub(3);
+            } else if in_rect(rects.paper_list, col, row) {
+                app.paper_list_scroll = app.paper_list_scroll.saturating_sub(1);
+                app.paper_list_selected = app.paper_list_selected.saturating_sub(1);
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if in_rect(rects.paper_list, col, row) {
+                let rel_row = row.saturating_sub(rects.paper_list.y);
+                let idx = app.paper_list_scroll + rel_row as usize;
+                if idx < app.papers.len() {
+                    app.paper_list_selected = idx;
+                    app.load_paper(idx);
+                }
+            }
+            if in_rect(rects.preview_tabs, col, row) {
+                let rel_col = col.saturating_sub(rects.preview_tabs.x);
+                let tab_idx = (rel_col / 12).min(3) as usize;
+                let views = [ViewMode::Body, ViewMode::Appendix, ViewMode::Note, ViewMode::Description];
+                app.view_mode = views[tab_idx];
+            }
+            if rects.three_pane && in_rect(rects.chat_input, col, row) {
+                app.input_mode = InputMode::Chat;
+                app.show_chat = true;
+            }
+            if rects.three_pane && in_rect(rects.chat, col, row) {
+                app.input_mode = InputMode::Chat;
+            }
+            if in_rect(rects.preview, col, row) {
+                if app.input_mode == InputMode::Chat {
+                    app.input_mode = InputMode::Normal;
+                }
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if in_rect(rects.preview, col, row) {
+                let dy = mouse.row as i32 - rects.preview.y as i32 - 2;
+                if dy >= 0 {
+                    app.preview_scroll = (dy as u16).max(0);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn in_rect(r: Rect, col: u16, row: u16) -> bool {
+    col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
 
 async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
@@ -92,7 +188,6 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                         content: msg.clone(),
                     });
                     app.add_log("sending...");
-                    // TODO: async chat send
                 }
             }
             KeyCode::Backspace => {
@@ -126,11 +221,10 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
         InputMode::Command => match key.code {
             KeyCode::Esc => {
                 app.input_mode = InputMode::Normal;
-                app.status = String::new();
+                app.status.clear();
             }
             KeyCode::Enter => {
-                let cmd = app.status.clone();
-                app.status.clear();
+                let cmd = std::mem::take(&mut app.status);
                 app.input_mode = InputMode::Normal;
                 match cmd.as_str() {
                     "o" | "open" => {
@@ -141,10 +235,8 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                     }
                     "p" | "pdf" => {
                         if let Some(ref paper) = app.current_paper {
-                            let _ = open::that(format!(
-                                "https://arxiv.org/pdf/{}",
-                                paper.arxiv_id
-                            ));
+                            let _ =
+                                open::that(format!("https://arxiv.org/pdf/{}", paper.arxiv_id));
                             app.add_log(&format!("opened PDF for {}", paper.arxiv_id));
                         }
                     }
@@ -157,13 +249,14 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
                     "m" | "model" => {
                         let new = if app.chat_model == "Flash" { "Pro" } else { "Flash" };
                         app.chat_model = new.to_string();
+                        let _ = config::save_model_preference(&app.chat_model);
                         app.add_log(&format!("model: {new}"));
                     }
                     "t" | "think" => {
                         app.deep_thinking = !app.deep_thinking;
                         app.add_log(&format!("deep thinking: {}", app.deep_thinking));
                     }
-                    _ => app.add_log(&format!("unknown command: {cmd}. try: open, pdf, scan, dl, model, think")),
+                    _ => app.add_log(&format!("unknown: {cmd}. try: open, pdf, scan, dl, model, think")),
                 }
             }
             KeyCode::Char(c) => {
@@ -177,7 +270,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
         InputMode::Normal => match key.code {
             KeyCode::Char('q') => app.quit = true,
             KeyCode::Char('?') => {
-                app.add_log("[?] j/k:nav 1-4:view c:chat o:open p:pdf s:scan d:download :cmd q:quit");
+                app.add_log("[?] scroll:select j↓/k↑/mouse enter:load 1-4:view c:chat e:edit s:scan d:dl o:open p:pdf ::cmd q:quit");
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if !app.papers.is_empty() && app.paper_list_selected + 1 < app.papers.len() {
@@ -235,8 +328,7 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
             }
             KeyCode::Char('p') => {
                 if let Some(ref paper) = app.current_paper {
-                    let _ =
-                        open::that(format!("https://arxiv.org/pdf/{}", paper.arxiv_id));
+                    let _ = open::that(format!("https://arxiv.org/pdf/{}", paper.arxiv_id));
                     app.add_log(&format!("opened PDF for {}", paper.arxiv_id));
                 }
             }
@@ -250,37 +342,75 @@ async fn handle_key(app: &mut App, key: event::KeyEvent) -> io::Result<()> {
     Ok(())
 }
 
-fn ui(f: &mut Frame, app: &mut App) {
+fn ui(f: &mut Frame, app: &mut App) -> Rects {
+    let mut rects = Rects::default();
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(2),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(f.area());
 
-    render_header(f, app, main_chunks[0]);
+    rects.header = main_chunks[0];
+    rects.status = main_chunks[2];
 
-    let body = if app.show_chat && app.current_paper.is_some() {
+    render_header(f, app, rects.header);
+
+    let body_area = main_chunks[1];
+    let three_pane = app.show_chat && app.current_paper.is_some();
+    rects.three_pane = three_pane;
+
+    if three_pane {
         let h = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(30), Constraint::Percentage(40), Constraint::Percentage(30)])
-            .split(main_chunks[1]);
-        render_paper_list(f, app, h[0]);
-        render_preview(f, app, h[1]);
-        render_chat(f, app, h[2]);
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(40),
+                Constraint::Percentage(35),
+            ])
+            .split(body_area);
+        rects.paper_list = h[0];
+        rects.preview = h[1];
+        rects.chat = h[2];
+
+        let preview_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(rects.preview);
+        rects.preview_tabs = preview_chunks[0];
+
+        let chat_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(3)])
+            .split(rects.chat);
+        rects.chat_input = chat_chunks[2];
     } else {
         let h = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(28), Constraint::Percentage(72)])
-            .split(main_chunks[1]);
-        render_paper_list(f, app, h[0]);
-        render_preview(f, app, h[1]);
-    };
-    let _ = body;
+            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
+            .split(body_area);
+        rects.paper_list = h[0];
+        rects.preview = h[1];
 
-    render_status(f, app, main_chunks[2]);
+        let preview_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(rects.preview);
+        rects.preview_tabs = preview_chunks[0];
+        rects.chat_input = Rect::default();
+    }
+
+    render_paper_list(f, app, rects.paper_list);
+    render_preview(f, app, rects.preview, rects.preview_tabs);
+    if three_pane {
+        render_chat(f, app, rects.chat, rects.chat_input);
+    }
+    render_status(f, app, rects.status);
+
+    rects
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
@@ -288,14 +418,18 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         "ArxivCat TUI — no workspace".to_string()
     } else {
         format!(
-            "ArxivCat TUI — {} ({} papers)",
+            "ArxivCat TUI — {}  papers:{}",
             app.workspace_path_str,
             app.papers.len()
         )
     };
     let p = Paragraph::new(text)
         .style(Style::default().fg(Color::Rgb(137, 180, 250)))
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(49, 50, 68))));
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+        );
     f.render_widget(p, area);
 }
 
@@ -305,9 +439,17 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, p)| {
-            let icon = if p.is_complete { "●" } else if p.has_body { "○" } else { "·" };
+            let icon = if p.is_complete {
+                "●"
+            } else if p.has_body {
+                "○"
+            } else {
+                "·"
+            };
             let style = if i == app.paper_list_selected {
-                Style::default().fg(Color::Rgb(205, 214, 244)).bg(Color::Rgb(69, 71, 90))
+                Style::default()
+                    .fg(Color::Rgb(205, 214, 244))
+                    .bg(Color::Rgb(69, 71, 90))
             } else {
                 Style::default().fg(Color::Rgb(166, 173, 200))
             };
@@ -315,67 +457,70 @@ fn render_paper_list(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title("Papers")
-                .borders(Borders::RIGHT)
-                .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
-        )
-        .scroll_padding(1);
-
-    f.render_widget(list, area);
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Papers ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+    );
+    f.render_stateful_widget(
+        list,
+        area,
+        &mut ratatui::widgets::ListState::default()
+            .with_selected(Some(app.paper_list_selected))
+            .with_offset(app.paper_list_scroll),
+    );
 }
 
-fn render_preview(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1)])
-        .split(area);
-
+fn render_preview(f: &mut Frame, app: &App, area: Rect, tab_area: Rect) {
     let mode_label = match app.view_mode {
         ViewMode::Body => " Body ",
         ViewMode::Appendix => " Appendix ",
         ViewMode::Note => " Note ",
         ViewMode::Description => " Description ",
     };
-    let tab_widget = Paragraph::new(mode_label)
-        .style(Style::default().fg(Color::Rgb(137, 180, 250)).bg(Color::Rgb(49, 50, 68)));
-    f.render_widget(tab_widget, chunks[0]);
+    let tab_widget = Paragraph::new(mode_label).style(
+        Style::default()
+            .fg(Color::Rgb(137, 180, 250))
+            .bg(Color::Rgb(49, 50, 68)),
+    );
+    f.render_widget(tab_widget, tab_area);
 
     let text = if app.current_paper.is_some() {
         app.current_text()
     } else {
-        "Select a paper from the list"
+        "← Click a paper or press Enter to load"
     };
 
-    let content = if text.is_empty() {
-        "(empty)".to_string()
-    } else {
-        text.to_string()
-    };
+    let content = if text.is_empty() { "(empty)" } else { text };
 
+    let char_count = content.chars().count();
+    let lines = content.lines().count();
     let p = Paragraph::new(content)
         .block(
             Block::default()
-                .borders(Borders::NONE),
+                .title(format!(" {} chars · {} lines ", char_count, lines))
+                .title_bottom(" scroll ↑↓/wheel ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
         )
         .wrap(Wrap { trim: false })
         .scroll((app.preview_scroll, 0));
-    f.render_widget(p, chunks[1]);
+    f.render_widget(p, area);
 }
 
-fn render_chat(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
+fn render_chat(f: &mut Frame, app: &App, area: Rect, input_area: Rect) {
+    let inner = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(3)])
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
         .split(area);
+    let messages_area = inner[0];
 
-    let model_str = format!("Chat [{}]", app.chat_model);
-    let header = Paragraph::new(model_str)
-        .style(Style::default().fg(Color::Rgb(137, 180, 250)))
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(49, 50, 68))));
-    f.render_widget(header, chunks[0]);
+    let model_line = format!(
+        " Chat [{}] {} ",
+        app.chat_model,
+        if app.deep_thinking { "🧠" } else { "" }
+    );
 
     let msgs: Vec<ListItem> = app
         .chat_messages
@@ -386,18 +531,45 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default().fg(Color::Rgb(205, 214, 244))
             };
-            ListItem::new(format!("<{}> {}", m.speaker, m.content)).style(style)
+            let prefix = if m.speaker == "user" { "You" } else { "AI" };
+            ListItem::new(format!("<{prefix}> {}", m.content)).style(style)
         })
         .collect();
-    let chat_list = List::new(msgs)
-        .block(Block::default().borders(Borders::NONE))
-        .scroll_padding(1);
-    f.render_widget(chat_list, chunks[1]);
+    let chat_list = List::new(msgs).block(
+        Block::default()
+            .title(model_line)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+    );
+    f.render_widget(chat_list, messages_area);
 
-    let input = Paragraph::new(format!("> {}", app.chat_input))
-        .style(Style::default().fg(Color::Rgb(205, 214, 244)))
-        .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::Rgb(49, 50, 68))));
-    f.render_widget(input, chunks[2]);
+    let input_text = format!(
+        "> {}",
+        if app.chat_input.is_empty() {
+            "type here..."
+        } else {
+            &app.chat_input
+        }
+    );
+    let input_style = if app.input_mode == InputMode::Chat {
+        Style::default()
+            .fg(Color::Rgb(205, 214, 244))
+            .bg(Color::Rgb(49, 50, 68))
+    } else {
+        Style::default().fg(Color::Rgb(108, 112, 134))
+    };
+    let input = Paragraph::new(input_text)
+        .style(input_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if app.input_mode == InputMode::Chat {
+                    Color::Rgb(137, 180, 250)
+                } else {
+                    Color::Rgb(49, 50, 68)
+                })),
+        );
+    f.render_widget(input, input_area);
 }
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
@@ -410,14 +582,21 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let status_text = if !app.status.is_empty() {
         app.status.clone()
     } else {
+        let chat_hint = if app.current_paper.is_some() {
+            " | c:chat"
+        } else {
+            ""
+        };
         format!(
-            "[{}] j↓ k↑ Enter:load 1-4:view c:chat e:edit :cmd q:quit | {} papers",
-            mode,
-            app.papers.len()
+            "[{mode}] ↑↓/scroll/jk:nav 1-4:view{chat_hint} e:edit s:scan d:dl o:open p:pdf ::cmd q:quit  ?:help",
         )
     };
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(Color::Rgb(166, 173, 200)))
-        .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::Rgb(49, 50, 68))));
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(Color::Rgb(49, 50, 68))),
+        );
     f.render_widget(status, area);
 }
