@@ -12,6 +12,7 @@ __pycache__/
 
 # Build artifacts
 build/
+reference/
 *.exe
 *.msi
 *.apk
