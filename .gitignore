@@ -11,6 +11,7 @@ __pycache__/
 *.spec
 
 # Build artifacts
+build/
 *.exe
 *.msi
 *.apk
