@@ -81,7 +81,7 @@ where
 
     let start = std::time::Instant::now();
     let mut buffer = String::new();
-    let mut ttft_recorded = false;
+    let mut ttft: Option<std::time::Duration> = None;
     let mut token_count = 0u32;
     let mut first_chunk = true;
 
@@ -113,8 +113,8 @@ where
             let data = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                 if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
-                    if !content.is_empty() && !ttft_recorded {
-                        ttft_recorded = true;
+                    if !content.is_empty() && ttft.is_none() {
+                        ttft = Some(start.elapsed());
                     }
 
                     let collapsed = newline_collapse_re
@@ -137,23 +137,28 @@ where
 
     if !buffer.is_empty() {
         let elapsed = start.elapsed();
-        let _ttft_ms = if ttft_recorded {
-            elapsed.as_secs_f64() * 1000.0 / token_count.max(1) as f64
-        } else {
-            0.0
-        };
         let tps = if elapsed.as_secs_f64() > 0.0 {
             token_count as f64 / elapsed.as_secs_f64()
         } else {
             0.0
         };
 
-        let metrics = format!(
+        let mut metrics = format!(
             "{} | {:.0} tok/s | {} tokens",
             model_id,
             tps,
             buffer.len()
         );
+
+        if let Some(t) = ttft {
+            metrics = format!(
+                "{} | TTFT {:.0}ms | {:.0} tok/s | {} tokens",
+                model_id,
+                t.as_secs_f64() * 1000.0,
+                tps,
+                buffer.len()
+            );
+        }
 
         (callbacks.on_status)(&metrics);
         (callbacks.on_complete)(buffer.trim());

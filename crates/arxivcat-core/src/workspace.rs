@@ -199,6 +199,10 @@ pub async fn process_pending_paper(
 
     if paper.has_body && !paper.description_ready {
         ensure_paper_meta_files(&out_dir)?;
+        let _ = crate::chat::description::build_description(
+            &out_dir, arxiv_id, &paper.title, None,
+        )
+        .await;
         return Ok(has_complete_description(&out_dir));
     }
 
@@ -224,10 +228,15 @@ pub async fn process_pending_paper(
 
     ensure_paper_meta_files(&out_dir)?;
 
+    let _ = crate::chat::description::build_description(
+        &out_dir, arxiv_id, &paper.title, None,
+    )
+    .await;
+
     Ok(out_dir.join("body.tex").exists() && has_complete_description(&out_dir))
 }
 
-fn ensure_paper_meta_files(paper_dir: &Path) -> Result<()> {
+pub fn ensure_paper_meta_files(paper_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(paper_dir)?;
     let note = paper_dir.join("note.txt");
     if !note.exists() {

@@ -75,12 +75,36 @@ pub async fn cmd_validate(_cli: &Cli) {
 }
 
 async fn validate_token_inner(token: &str) -> Result<bool, String> {
+    let start = std::time::Instant::now();
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get("https://api.deepseek.com/models")
         .header("Authorization", format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(response.status().is_success())
+    {
+        Ok(r) => r,
+        Err(e) => {
+            if e.is_timeout() {
+                return Err("request timed out (15s)".into());
+            }
+            return Err(format!("connection failed: {e}"));
+        }
+    };
+
+    let elapsed = start.elapsed();
+
+    if response.status().is_success() {
+        println!("response time: {:.0}ms", elapsed.as_secs_f64() * 1000.0);
+        return Ok(true);
+    }
+
+    let msg = match response.status().as_u16() {
+        401 => "authentication failed: invalid token",
+        429 => "rate limit exceeded — wait and retry",
+        403 => "access forbidden — token may lack permissions",
+        code => return Err(format!("API returned HTTP {code}")),
+    };
+    Err(msg.into())
 }

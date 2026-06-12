@@ -74,7 +74,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
 
     let downloads_dir = config::get_downloads_dir();
 
-    let (paper_dir_opt, _folder_name) =
+    let (paper_dir_opt, folder_name_opt) =
         match arxivcat_core::extract::source::download_source(&arxiv_id, &downloads_dir).await {
             Ok(r) => r,
             Err(e) => {
@@ -91,7 +91,12 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
         }
     };
 
-    let output_dir = ws_path.join("temp_extract");
+    let folder_name = folder_name_opt.unwrap_or_else(|| {
+        arxiv_id.replace('.', "_")
+    });
+
+    let output_dir = ws_path.join(&folder_name);
+
     let output =
         match arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &output_dir) {
             Ok(o) => o,
@@ -101,22 +106,36 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
             }
         };
 
+    let _ = arxivcat_core::extract::source::download_pdf(&arxiv_id, &output_dir).await;
+
+    if let Err(e) = arxivcat_core::workspace::ensure_paper_meta_files(&output_dir) {
+        eprintln!("{}: {e}", warn("warning creating meta files"));
+    }
+
+    let _ = arxivcat_core::chat::description::build_description(
+        &output_dir, &arxiv_id, "", None,
+    )
+    .await;
+
     if !cli.json {
         println!("{}", ok("extraction complete"));
+        println!("arxiv ID: {}", &arxiv_id);
+        println!("folder: {}", output_dir.display());
         println!("body: {} chars", output.body.len());
         if let Some(ref app) = output.appendix {
             println!("appendix: {} chars", app.len());
         }
     } else {
+        let desc_exists = output_dir.join(".description_ready").exists();
         let json = serde_json::json!({
             "arxiv_id": arxiv_id,
+            "folder": output_dir.to_string_lossy(),
             "body_length": output.body.len(),
             "appendix_length": output.appendix.as_ref().map(|a| a.len()),
+            "description_ready": desc_exists,
         });
         println!("{}", serde_json::to_string_pretty(&json).unwrap());
     }
-
-    let _ = std::fs::remove_dir_all(&output_dir);
 }
 
 pub async fn cmd_download_all(cli: &Cli) {
