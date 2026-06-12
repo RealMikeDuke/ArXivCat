@@ -193,23 +193,26 @@ fn repair_permissions(dir: &Path) -> Result<()> {
 }
 
 fn is_safe_tar_member<R: std::io::Read>(member: &tar::Entry<'_, R>, target_dir: &Path) -> bool {
-    let path = member.path();
-    if path.is_err() {
-        return false;
-    }
-    let path = path.unwrap();
-    let member_path = target_dir.join(&*path);
+    let path = match member.path() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
 
-    match member_path.canonicalize() {
-        Ok(resolved) => {
-            let target = match target_dir.canonicalize() {
-                Ok(t) => t,
-                Err(_) => return false,
-            };
-            resolved == target || resolved.starts_with(&target)
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
+            _ => {}
         }
-        Err(_) => false,
     }
+
+    let target = match target_dir.canonicalize() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let joined = target.join(&*path);
+    joined.starts_with(&target)
 }
 
 fn extract_tar(tar_path: &Path, target_dir: &Path) -> Result<()> {
@@ -280,5 +283,98 @@ mod tests {
         std::fs::create_dir(dir.path().join("test_folder_fresh1")).unwrap();
         let name = fresh_folder_name(dir.path(), base).unwrap();
         assert_eq!(name, "test_folder_fresh2");
+    }
+
+    fn make_tar_with_file(name: &str, content: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let tgz = dir.path().join("test.tar.gz");
+        let file = std::fs::File::create(&tgz).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path(name).unwrap();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, content).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        (dir, tgz)
+    }
+
+    fn with_first_entry<R>(tgz: &Path, f: impl FnOnce(&tar::Entry<'_, flate2::read::GzDecoder<std::fs::File>>) -> R) -> R {
+        let file = std::fs::File::open(tgz).unwrap();
+        let decoder = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(decoder);
+        let entry = archive.entries().unwrap().next().unwrap().unwrap();
+        f(&entry)
+    }
+
+    #[test]
+    fn test_is_safe_tar_member_accepts_regular_file() {
+        let (_dir, tgz) = make_tar_with_file("main.tex", b"\\documentclass{article}");
+        let target = tempfile::tempdir().unwrap();
+        let result = with_first_entry(&tgz, |entry| {
+            is_safe_tar_member(entry, target.path())
+        });
+        assert!(result);
+    }
+
+    #[test]
+    fn test_is_safe_tar_member_accepts_subdir_file() {
+        let (_dir, tgz) = make_tar_with_file("sec/intro.tex", b"intro");
+        let target = tempfile::tempdir().unwrap();
+        let result = with_first_entry(&tgz, |entry| {
+            is_safe_tar_member(entry, target.path())
+        });
+        assert!(result);
+    }
+
+    #[test]
+    fn test_extract_tar_extracts_files() {
+        let (_dir, tgz) = make_tar_with_file("main.tex", b"\\documentclass{article}\nHello world");
+        let target = tempfile::tempdir().unwrap();
+        extract_tar(&tgz, target.path()).unwrap();
+
+        let main = target.path().join("main.tex");
+        assert!(main.exists());
+        assert_eq!(
+            std::fs::read_to_string(&main).unwrap(),
+            "\\documentclass{article}\nHello world"
+        );
+    }
+
+    #[test]
+    fn test_extract_tar_extracts_nested_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let tgz = dir.path().join("nested.tar.gz");
+        let file = std::fs::File::create(&tgz).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("sec/").unwrap();
+        header.set_size(0);
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder.append(&header, &[][..]).unwrap();
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("sec/intro.tex").unwrap();
+        header.set_size(4);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, "text".as_bytes()).unwrap();
+
+        builder.into_inner().unwrap().finish().unwrap();
+
+        let target = tempfile::tempdir().unwrap();
+        extract_tar(&tgz, target.path()).unwrap();
+
+        assert!(target.path().join("sec/intro.tex").exists());
+        assert_eq!(
+            std::fs::read_to_string(target.path().join("sec/intro.tex")).unwrap(),
+            "text"
+        );
     }
 }
