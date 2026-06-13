@@ -16,3 +16,4 @@ tokio = { workspace = true }
 clap = { workspace = true }
 open = "5"
 arboard = "3"
+unicode-width = { workspace = true }

@@ -191,6 +191,7 @@ dependencies = [
  "open",
  "ratatui",
  "tokio",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

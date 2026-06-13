@@ -1,3 +1,5 @@
+use unicode_width::UnicodeWidthChar;
+
 use arxivcat_core::config;
 use arxivcat_core::workspace::{Paper, Workspace};
 
@@ -16,7 +18,6 @@ pub struct App {
     pub show_chat: bool,
     pub chat_input: String,
     pub chat_messages: Vec<ChatMsg>,
-    #[allow(dead_code)]
     pub chat_scroll: usize,
     #[allow(dead_code)]
     pub chat_streaming: bool,
@@ -32,19 +33,23 @@ pub struct App {
     pub selecting: bool,
     pub sel_start: Option<(u16, u16)>,
     pub sel_end: Option<(u16, u16)>,
+    pub preview_focused: bool,
     pub just_selected: bool,
     pub mouse_col: u16,
     pub mouse_row: u16,
     pub left_width_pct: u16,
     pub right_width_pct: u16,
     pub dragging_border: Option<usize>,
+    pub dragging_scrollbar: bool,
     pub hover_left_border: bool,
     pub hover_right_border: bool,
     pub text_line_width: u16,
     pub preview_cursor: usize,
     pub hotkeys_locked: bool,
     pub preview_hscroll: u16,
-    pub screen_map: Vec<(usize, usize)>,  // screen_row -> (logical_line_idx, byte_offset)
+    pub screen_map: Vec<(usize, usize)>,  // visual_row -> (logical_line_idx, byte_offset)
+    pub visual_lines: Vec<String>,        // pre-split visual lines (no ratatui Wrap)
+    pub visual_line_starts: Vec<usize>,   // absolute byte start in original text for each visual line
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -100,12 +105,14 @@ impl App {
             selecting: false,
             sel_start: None,
             sel_end: None,
+            preview_focused: false,
             just_selected: false,
             mouse_col: 0,
             mouse_row: 0,
             left_width_pct: 25,
             right_width_pct: 35,
             dragging_border: None,
+            dragging_scrollbar: false,
             hover_left_border: false,
             hover_right_border: false,
             text_line_width: 80,
@@ -113,6 +120,7 @@ impl App {
             hotkeys_locked: true,
             preview_hscroll: 0,
             screen_map: Vec::new(),
+            visual_lines: Vec::new(),
         }
     }
 
@@ -142,6 +150,7 @@ impl App {
         self.current_paper = Some(paper.clone());
         self.view_mode = ViewMode::Body;
         self.preview_scroll = 0;
+        self.preview_focused = false;
     }
 
     pub fn current_text(&self) -> &str {
@@ -218,45 +227,25 @@ impl App {
         }
     }
 
-    fn char_boundary(s: &str, byte_idx: usize) -> usize {
-        let idx = byte_idx.min(s.len());
-        let mut i = idx;
-        while i > 0 && !s.is_char_boundary(i) { i -= 1; }
-        i
-    }
-
     pub fn get_sel_text(&self, x1: u16, y1: u16, x2: u16, y2: u16) -> String {
-        let text = self.current_text();
-        let logical: Vec<&str> = text.lines().collect();
         let (sx, sy, ex, ey) = if (y1, x1) <= (y2, x2) {
             (x1 as usize, y1 as usize, x2 as usize, y2 as usize)
         } else {
             (x2 as usize, y2 as usize, x1 as usize, y1 as usize)
         };
-        let map = |sy: usize, sx: usize| -> (usize, usize) {
-            let idx = sy + self.preview_scroll as usize;
-            let (li, off) = self.screen_map.get(idx).copied().unwrap_or((0, 0));
-            let line = logical.get(li).copied().unwrap_or("");
-            let visible = &line[off.min(line.len())..];
-            let ci = sx.saturating_sub(1);
-            let cb = visible.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(visible.len());
-            (li, off + cb)
-        };
-        let (li1, b1) = map(sy, sx);
-        let (li2, b2) = map(ey, ex);
-        if li1 == li2 {
-            let line = logical.get(li1).copied().unwrap_or("");
-            let s = Self::char_boundary(line, b1);
-            let e = Self::char_boundary(line, b2).max(s);
-            return line[s..e].to_string();
-        }
+        let sv = (sy + self.preview_scroll as usize).min(self.visual_lines.len().saturating_sub(1));
+        let ev = (ey + self.preview_scroll as usize).min(self.visual_lines.len().saturating_sub(1));
         let mut r = String::new();
-        for li in li1..=li2.min(logical.len().saturating_sub(1)) {
+        for vi in sv..=ev {
             if !r.is_empty() { r.push('\n'); }
-            let line = logical[li];
-            if li == li1 { r.push_str(&line[Self::char_boundary(line, b1)..]); }
-            else if li == li2 { r.push_str(&line[..Self::char_boundary(line, b2)]); }
-            else { r.push_str(line); }
+            let vis = self.visual_lines.get(vi).map(|s| s.as_str()).unwrap_or("");
+            let c_start = if vi == sv {
+                vis.char_indices().nth(sx).map(|(i,_)| i).unwrap_or(vis.len())
+            } else { 0 };
+            let c_end = if vi == ev {
+                vis.char_indices().nth(ex).map(|(i,_)| i).unwrap_or(vis.len())
+            } else { vis.len() };
+            r.push_str(&vis[c_start..c_end]);
         }
         r
     }
@@ -267,10 +256,10 @@ impl App {
         let (li, off) = self.screen_map[idx];
         let text = self.current_text();
         let logical: Vec<&str> = text.lines().collect();
-        let line = logical.get(li)?;
-        let visible = &line[off.min(line.len())..];
-        let ci = (screen_x as usize).saturating_sub(1);
-        let col_byte = visible.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(visible.len());
+        if li >= logical.len() { return None; }
+        let vis = self.visual_lines.get(idx).map(|s| s.as_str()).unwrap_or("");
+        let ci = screen_x as usize;
+        let col_byte = vis.char_indices().nth(ci).map(|(i, _)| i).unwrap_or(vis.len());
         let line_start: usize = logical.iter().take(li).map(|l| l.len() + 1).sum();
         Some(line_start + off + col_byte)
     }
@@ -279,18 +268,35 @@ impl App {
         let text = self.current_text().to_string();
         let lw = (line_width as usize).max(1);
         self.screen_map.clear();
+        self.visual_lines.clear();
         for (li, line) in text.lines().enumerate() {
-            let mut offset = 0;
-            loop {
-                if offset >= line.len() {
-                    self.screen_map.push((li, line.len()));
-                    break;
+            let chars: Vec<char> = line.chars().collect();
+            let char_widths: Vec<usize> = chars.iter().map(|c| UnicodeWidthChar::width(*c).unwrap_or(1).max(1)).collect();
+            let char_offsets: Vec<usize> = chars.iter().scan(0usize, |acc, c| { let o = *acc; *acc += c.len_utf8(); Some(o) }).collect();
+            let n = chars.len();
+            let before = self.screen_map.len();
+            let mut i = 0usize;
+            while i < n {
+                if self.screen_map.len() > before {
+                    while i < n && chars[i].is_whitespace() { i += 1; }
                 }
-                self.screen_map.push((li, offset));
-                let remaining = &line[offset..];
-                if remaining.len() <= lw { break; }
-                let split = Self::char_boundary(remaining, lw);
-                offset += split;
+                if i >= n { break; }
+                let entry_offset = char_offsets.get(i).copied().unwrap_or(line.len());
+                self.screen_map.push((li, entry_offset));
+                let mut width_used = 0usize;
+                let vis_start = i;
+                while i < n && width_used < lw {
+                    width_used += char_widths[i];
+                    i += 1;
+                }
+                if width_used == 0 && i < n { i += 1; }
+                let vis_end = i.min(n);
+                let vis: String = chars[vis_start..vis_end].iter().collect();
+                self.visual_lines.push(vis);
+            }
+            if before == self.screen_map.len() {
+                self.screen_map.push((li, line.len()));
+                self.visual_lines.push(String::new());
             }
         }
     }
