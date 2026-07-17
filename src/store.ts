@@ -17,6 +17,40 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ContextSelection {
+  body: boolean;
+  appendix: boolean;
+  description: boolean;
+  note: boolean;
+}
+
+export const DEFAULT_SIDE_SELECTION: ContextSelection = {
+  body: true,
+  appendix: false,
+  description: false,
+  note: false,
+};
+
+export const DEFAULT_GLOBAL_SELECTION: ContextSelection = {
+  body: false,
+  appendix: false,
+  description: true,
+  note: false,
+};
+
+interface ChatState {
+  sessionId: string | null;
+  streaming: boolean;
+  status: string;
+  bufferTokens: string[];
+}
+
+interface DownloadState {
+  inProgress: boolean;
+  current: number;
+  total: number;
+}
+
 interface StoreState {
   workspacePath: string | null;
   papers: Paper[];
@@ -29,6 +63,12 @@ interface StoreState {
   chatModel: string;
   deepThinking: boolean;
   logMessages: string[];
+
+  sideContextSelection: ContextSelection;
+  globalContextSelection: Record<string, ContextSelection>;
+
+  chat: ChatState;
+  download: DownloadState;
 
   initWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
@@ -47,6 +87,11 @@ interface StoreState {
   toggleDeepThinking: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   clearChat: () => void;
+
+  setSideSelection: (sel: ContextSelection) => void;
+  setGlobalSelection: (folderName: string, sel: ContextSelection) => void;
+  sendChat: (messages: ChatMessage[], context: string) => Promise<void>;
+  cancelChat: () => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -61,6 +106,12 @@ export const useStore = create<StoreState>((set, get) => ({
   chatModel: "Flash",
   deepThinking: true,
   logMessages: [],
+
+  sideContextSelection: { ...DEFAULT_SIDE_SELECTION },
+  globalContextSelection: {},
+
+  chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] },
+  download: { inProgress: false, current: 0, total: 0 },
 
   initWorkspace: async () => {
     try {
@@ -161,13 +212,13 @@ export const useStore = create<StoreState>((set, get) => ({
   downloadAll: async () => {
     const { workspacePath } = get();
     if (!workspacePath) return;
+    set({ download: { inProgress: true, current: 0, total: 0 } });
     get().addLog("[INFO] Starting batch download...");
     try {
-      const count = await invoke<number>("download_all", { workspacePath });
-      get().addLog(`[OK] Processed ${count} papers`);
-      await get().refreshPapers();
+      await invoke("download_all", { workspacePath });
     } catch (e) {
       get().addLog(`[ERROR] Batch download failed: ${e}`);
+      set({ download: { inProgress: false, current: 0, total: 0 } });
     }
   },
 
@@ -176,7 +227,23 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       await invoke<string>("extract_paper", { arxivId });
       get().addLog(`[OK] Extracted ${arxivId}`);
-      // Show the result and refresh
+
+      // trigger description generation if workspace + paper available
+      const { workspacePath, papers } = get();
+      if (workspacePath) {
+        const paper = papers.find((p) => p.arxiv_id === arxivId);
+        if (paper) {
+          const paperDir = `${workspacePath}/${paper.folder_name}`;
+          invoke("build_description", {
+            paperDir,
+            arxivId,
+            title: paper.title,
+          })
+            .then(() => get().addLog(`[OK] Description generated for ${arxivId}`))
+            .catch(() => {});
+        }
+      }
+
       await get().refreshPapers();
     } catch (e) {
       get().addLog(`[ERROR] Extraction failed: ${e}`);
@@ -193,7 +260,51 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setChatModel: (model: string) => set({ chatModel: model }),
   toggleDeepThinking: () => set((s) => ({ deepThinking: !s.deepThinking })),
+
   addChatMessage: (msg: ChatMessage) =>
     set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
-  clearChat: () => set({ chatMessages: [] }),
+
+  clearChat: () => set({ chatMessages: [], chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] } }),
+
+  setSideSelection: (sel: ContextSelection) => set({ sideContextSelection: sel }),
+
+  setGlobalSelection: (folderName: string, sel: ContextSelection) =>
+    set((s) => ({
+      globalContextSelection: { ...s.globalContextSelection, [folderName]: sel },
+    })),
+
+  sendChat: async (messages: ChatMessage[], context: string) => {
+    const { chatModel, deepThinking } = get();
+    const apiMessages = messages.map((m) => ({
+      role: m.speaker === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+
+    try {
+      const { session_id } = await invoke<{ session_id: string }>("start_chat", {
+        messages: apiMessages,
+        model: chatModel,
+        deepThinking,
+        paperContext: context || null,
+      });
+
+      set({
+        chat: { sessionId: session_id, streaming: true, status: "thinking...", bufferTokens: [] },
+      });
+
+      // events are handled by event listeners set up in components
+      // the first token event will clear "thinking..." status
+    } catch (e) {
+      set({ chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] } });
+      get().addLog(`[ERROR] Chat failed: ${e}`);
+    }
+  },
+
+  cancelChat: () => {
+    const { chat } = get();
+    if (chat.sessionId) {
+      invoke("cancel_chat", { sessionId: chat.sessionId }).catch(() => {});
+      set({ chat: { sessionId: null, streaming: false, status: "cancelled", bufferTokens: [] } });
+    }
+  },
 }));

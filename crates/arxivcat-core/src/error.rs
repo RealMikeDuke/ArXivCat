@@ -1,5 +1,13 @@
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ErrorLevel {
+    Silent,
+    Toast,
+    Notice,
+    Blocking,
+}
+
 #[derive(Error, Debug)]
 pub enum ArxivError {
     #[error("IO error: {0}")]
@@ -28,6 +36,19 @@ pub enum ArxivError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl ArxivError {
+    pub fn level(&self) -> ErrorLevel {
+        match self {
+            ArxivError::Config(_) => ErrorLevel::Blocking,
+            ArxivError::Http(_) | ArxivError::Chat(_) => ErrorLevel::Toast,
+            ArxivError::NotFound(_) | ArxivError::Extraction(_) => ErrorLevel::Notice,
+            ArxivError::Io(_) | ArxivError::Parse(_) | ArxivError::Json(_) | ArxivError::Other(_) => {
+                ErrorLevel::Toast
+            }
+        }
+    }
 }
 
 impl From<String> for ArxivError {

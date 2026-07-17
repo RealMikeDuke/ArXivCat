@@ -1,7 +1,32 @@
-// Tauri commands - thin wrappers around arxivcat-core
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
+use arxivcat_core::error::{ArxivError, ErrorLevel};
 use arxivcat_core::{chat, config, extract, workspace};
 use serde::{Deserialize, Serialize};
+
+pub struct CancelState(pub Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>);
+
+impl CancelState {
+    pub fn new() -> Self {
+        CancelState(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
+
+#[derive(Serialize)]
+pub struct CommandError {
+    pub message: String,
+    pub level: ErrorLevel,
+}
+
+fn map_err(e: ArxivError) -> String {
+    serde_json::to_string(&CommandError {
+        message: e.to_string(),
+        level: e.level(),
+    })
+    .unwrap_or_else(|_| format!(r#"{{"message":"{}","level":"Toast"}}"#, e))
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct PaperDto {
@@ -26,27 +51,32 @@ impl From<&workspace::Paper> for PaperDto {
     }
 }
 
+#[derive(Serialize)]
+pub struct StreamChatResponse {
+    pub session_id: String,
+}
+
 #[tauri::command]
 pub async fn extract_paper(arxiv_id: String) -> Result<String, String> {
     let downloads_dir = config::get_downloads_dir();
     let output_dir = config::get_cache_dir().join("outputs");
     let result = extract::extract_paper(&arxiv_id, &downloads_dir, &output_dir)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(map_err)?;
     Ok(result.body)
 }
 
 #[tauri::command]
 pub async fn get_paper_list(workspace_path: String) -> Result<Vec<PaperDto>, String> {
     let ws = workspace::Workspace::open(std::path::Path::new(&workspace_path))
-        .map_err(|e| e.to_string())?;
+        .map_err(map_err)?;
     Ok(ws.papers.iter().map(PaperDto::from).collect())
 }
 
 #[tauri::command]
 pub async fn open_workspace(path: String) -> Result<Vec<PaperDto>, String> {
     let ws = workspace::Workspace::open(std::path::Path::new(&path))
-        .map_err(|e| e.to_string())?;
+        .map_err(map_err)?;
     let _ = config::save_workspace_path(std::path::Path::new(&path));
     Ok(ws.papers.iter().map(PaperDto::from).collect())
 }
@@ -81,7 +111,7 @@ pub async fn save_note(workspace_path: String, folder_name: String, content: Str
     let note_path = std::path::Path::new(&workspace_path)
         .join(&folder_name)
         .join("note.txt");
-    std::fs::write(&note_path, &content).map_err(|e| e.to_string())?;
+    std::fs::write(&note_path, &content).map_err(map_err)?;
     Ok(())
 }
 
@@ -96,21 +126,184 @@ pub async fn strip_comments(content: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn scan_pdfs(workspace_path: String) -> Result<usize, String> {
     let mut ws = workspace::Workspace::open(std::path::Path::new(&workspace_path))
-        .map_err(|e| e.to_string())?;
+        .map_err(map_err)?;
     workspace::scan_workspace_pdfs(&mut ws)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(map_err)
 }
 
 #[tauri::command]
-pub async fn download_all(workspace_path: String) -> Result<usize, String> {
-    // Will be implemented with proper event emission
-    Err("not yet implemented".to_string())
+pub async fn start_chat(
+    app_handle: tauri::AppHandle,
+    cancel_state: tauri::State<'_, CancelState>,
+    messages: Vec<serde_json::Value>,
+    model: String,
+    deep_thinking: bool,
+    paper_context: Option<String>,
+) -> Result<StreamChatResponse, String> {
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+
+    cancel_state.0.lock().map_err(|e| e.to_string())?.insert(session_id.clone(), cancel_flag.clone());
+
+    let app = app_handle.clone();
+    let mut full_messages = messages;
+    if let Some(ctx) = paper_context {
+        let system_content = format!("You are a helpful assistant discussing an arXiv paper.\n\nPaper context:\n{ctx}");
+        full_messages.insert(0, serde_json::json!({
+            "role": "system",
+            "content": system_content,
+        }));
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let sid = session_id.clone();
+        let result = chat::deepseek::stream_chat(
+            &full_messages,
+            &model,
+            deep_thinking,
+            chat::deepseek::StreamCallbacks {
+                on_token: |text, _is_first| {
+                    let _ = app.emit("chat:token", serde_json::json!({
+                        "session_id": sid,
+                        "token": text,
+                    }));
+                },
+                on_status: |status| {
+                    let _ = app.emit("chat:status", serde_json::json!({
+                        "session_id": sid,
+                        "status": status,
+                    }));
+                },
+                on_complete: |text| {
+                    let _ = app.emit("chat:done", serde_json::json!({
+                        "session_id": sid,
+                        "text": text,
+                    }));
+                },
+            },
+            &cancel_flag,
+        )
+        .await;
+
+        if let Err(e) = result {
+            let _ = app.emit("chat:error", serde_json::json!({
+                "session_id": sid,
+                "error": map_err(e),
+            }));
+        }
+    });
+
+    Ok(StreamChatResponse { session_id })
 }
 
 #[tauri::command]
-pub async fn stream_chat(messages: Vec<serde_json::Value>) -> Result<String, String> {
-    Err("not yet implemented".to_string())
+pub async fn cancel_chat(
+    cancel_state: tauri::State<'_, CancelState>,
+    session_id: String,
+) -> Result<(), String> {
+    if let Some(flag) = cancel_state.0.lock().map_err(|e| e.to_string())?.remove(&session_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn download_all(
+    app_handle: tauri::AppHandle,
+    workspace_path: String,
+) -> Result<(), String> {
+    let ws = workspace::Workspace::open(std::path::Path::new(&workspace_path))
+        .map_err(map_err)?;
+    let pending: Vec<_> = ws.pending_papers().into_iter().map(|p| {
+        let folder = p.folder.clone();
+        let arxiv_id = p.arxiv_id.clone();
+        let title = p.title.clone();
+        let has_body = p.has_body;
+        let description_ready = p.description_ready;
+        (folder, arxiv_id, title, has_body, description_ready)
+    }).collect();
+
+    let total = pending.len();
+    if total == 0 {
+        let _ = app_handle.emit("download:done", serde_json::json!({ "count": 0 }));
+        return Ok(());
+    }
+
+    let downloads_dir = config::get_downloads_dir();
+    let app = app_handle.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let mut completed = 0usize;
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        for (folder, arxiv_id, title, has_body, description_ready) in &pending {
+            if cancel_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let _ = app.emit("download:progress", serde_json::json!({
+                "current": completed,
+                "total": total,
+                "arxiv_id": arxiv_id,
+                "status": "processing",
+            }));
+
+            let paper = workspace::Paper {
+                arxiv_id: arxiv_id.clone(),
+                title: title.clone(),
+                folder_name: folder.file_name().unwrap().to_string_lossy().to_string(),
+                folder: folder.clone(),
+                has_body: *has_body,
+                description_ready: *description_ready,
+                is_complete: *has_body && *description_ready,
+            };
+
+            let result = workspace::process_pending_paper(
+                &paper,
+                &downloads_dir,
+                std::path::Path::new(&workspace_path),
+                &cancel_flag,
+            )
+            .await;
+
+            match result {
+                Ok(true) => {
+                    completed += 1;
+                    let _ = app.emit("download:progress", serde_json::json!({
+                        "current": completed,
+                        "total": total,
+                        "arxiv_id": arxiv_id,
+                        "status": "done",
+                    }));
+                }
+                Ok(false) => {
+                    let _ = app.emit("download:progress", serde_json::json!({
+                        "current": completed,
+                        "total": total,
+                        "arxiv_id": arxiv_id,
+                        "status": "skipped",
+                    }));
+                }
+                Err(e) => {
+                    let _ = app.emit("download:progress", serde_json::json!({
+                        "current": completed,
+                        "total": total,
+                        "arxiv_id": arxiv_id,
+                        "status": "error",
+                        "error": map_err(e),
+                    }));
+                }
+            }
+        }
+
+        let _ = app.emit("download:done", serde_json::json!({
+            "count": completed,
+            "total": total,
+        }));
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -126,7 +319,7 @@ pub async fn build_description(
         None,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(map_err)
 }
 
 #[tauri::command]
@@ -147,26 +340,29 @@ pub async fn get_token_status() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub async fn set_token(token: String) -> Result<(), String> {
-    config::save_token(&token).map_err(|e| e.to_string())
+    config::save_token(&token).map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn validate_token() -> Result<bool, String> {
-    let token = config::load_cached_token().ok_or("no token configured")?;
+    let token = config::load_cached_token().ok_or_else(|| {
+        map_err(ArxivError::Config("no token configured".into()))
+    })?;
     let client = reqwest::Client::new();
     let response = client
         .get("https://api.deepseek.com/models")
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ArxivError::Http(e))
+        .map_err(map_err)?;
     Ok(response.status().is_success())
 }
 
 #[tauri::command]
 pub async fn get_chat_sessions(session_dir: String) -> Result<Vec<serde_json::Value>, String> {
     let sessions = chat::session::list_sessions(std::path::Path::new(&session_dir))
-        .map_err(|e| e.to_string())?;
+        .map_err(map_err)?;
     Ok(sessions
         .iter()
         .map(|s| {
@@ -227,18 +423,18 @@ pub async fn save_chat_session_data(
     };
 
     chat::session::save_session(&mut session, Some(std::path::Path::new(&session_dir)))
-        .map_err(|e| e.to_string())
+        .map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn rename_chat_session_data(path: String, new_title: String) -> Result<(), String> {
     chat::session::rename_session(std::path::Path::new(&path), &new_title)
-        .map_err(|e| e.to_string())
+        .map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn delete_chat_session_data(path: String) -> Result<bool, String> {
-    chat::session::delete_session(std::path::Path::new(&path)).map_err(|e| e.to_string())
+    chat::session::delete_session(std::path::Path::new(&path)).map_err(map_err)
 }
 
 #[tauri::command]

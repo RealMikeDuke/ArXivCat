@@ -7,6 +7,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(CancelState::new())
         .invoke_handler(tauri::generate_handler![
             extract_paper,
             get_paper_list,
@@ -16,7 +17,8 @@ pub fn run() {
             strip_comments,
             scan_pdfs,
             download_all,
-            stream_chat,
+            start_chat,
+            cancel_chat,
             build_description,
             get_token_status,
             set_token,

@@ -1,95 +1,120 @@
-import { useState, useRef, useEffect } from "react";
-import { useStore } from "../store";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useStore, ContextSelection } from "../store";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export default function ChatPanel() {
   const {
     chatMessages,
     chatModel,
     deepThinking,
+    sideContextSelection,
+    chat,
+    previewContent,
     addChatMessage,
     clearChat,
     setChatModel,
     toggleDeepThinking,
+    setSideSelection,
+    sendChat,
+    cancelChat,
   } = useStore();
 
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [status, setStatus] = useState("");
+  const [localBuffer, setLocalBuffer] = useState("");
+  const setTokenCount = useState(0)[1];
   const bottomRef = useRef<HTMLDivElement>(null);
+  const localRef = useRef(localBuffer);
+  localRef.current = localBuffer;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages]);
+  }, [chatMessages, localBuffer]);
 
-  const handleSend = async () => {
-    if (!input.trim() || streaming) return;
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+
+    const setup = async () => {
+      const unlistenToken = await listen<{ session_id: string; token: string }>("chat:token", (e) => {
+        const { sessionId } = useStore.getState().chat;
+        if (e.payload.session_id !== sessionId) return;
+        setLocalBuffer((prev) => prev + e.payload.token);
+        useStore.setState((_) => ({
+          chat: { ...useStore.getState().chat, status: "" },
+        }));
+      });
+      unlisteners.push(unlistenToken);
+
+      const unlistenStatus = await listen<{ session_id: string; status: string }>("chat:status", (e) => {
+        const { sessionId } = useStore.getState().chat;
+        if (e.payload.session_id !== sessionId) return;
+        useStore.setState((_) => ({
+          chat: { ...useStore.getState().chat, status: e.payload.status },
+        }));
+      });
+      unlisteners.push(unlistenStatus);
+
+      const unlistenDone = await listen<{ session_id: string; text: string }>("chat:done", (e) => {
+        const { sessionId, bufferTokens } = useStore.getState().chat;
+        if (e.payload.session_id !== sessionId) return;
+        const finalText = (localRef.current + (bufferTokens.join("")));
+        if (finalText) {
+          useStore.getState().addChatMessage({ speaker: "assistant", content: finalText });
+        }
+        setLocalBuffer("");
+        setTokenCount(0);
+        useStore.setState((_) => ({
+          chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] },
+        }));
+      });
+      unlisteners.push(unlistenDone);
+
+      const unlistenError = await listen<{ session_id: string; error: string }>("chat:error", (e) => {
+        const { sessionId } = useStore.getState().chat;
+        if (e.payload.session_id !== sessionId) return;
+        setLocalBuffer("");
+        setTokenCount(0);
+        useStore.setState((_) => ({
+          chat: { sessionId: null, streaming: false, status: `error: ${e.payload.error}`, bufferTokens: [] },
+        }));
+      });
+      unlisteners.push(unlistenError);
+    };
+
+    setup();
+
+    return () => {
+      unlisteners.forEach((u) => u());
+    };
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || chat.streaming) return;
     const msg = input;
     setInput("");
+
     addChatMessage({ speaker: "user", content: msg });
+    const context = buildContextString(previewContent, sideContextSelection);
 
-    setStreaming(true);
-    setStatus("thinking...");
+    const newMessages = [
+      ...chatMessages,
+      { speaker: "user", content: msg },
+    ];
 
-    try {
-      const response = await fetch("https://api.deepseek.com/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("deepseek_token") || ""}`,
-        },
-        body: JSON.stringify({
-          model: chatModel === "Flash" ? "deepseek-v4-flash" : "deepseek-v4-pro",
-          messages: [
-            { role: "system", content: "You are a helpful assistant discussing an arXiv paper." },
-            ...chatMessages.map((m) => ({
-              role: m.speaker === "user" ? "user" : "assistant",
-              content: m.content,
-            })),
-            { role: "user", content: msg },
-          ],
-          stream: true,
-        }),
-      });
+    await sendChat(newMessages, context);
+  }, [input, chat.streaming, chatMessages, previewContent, sideContextSelection, addChatMessage, sendChat]);
 
-      if (!response.ok) {
-        setStatus(`API error: ${response.status}`);
-        setStreaming(false);
-        return;
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value, { stream: true });
-          for (const line of text.split("\n")) {
-            const data = line.trim();
-            if (!data || data === "data: [DONE]") continue;
-            if (data.startsWith("data: ")) {
-              try {
-                const json = JSON.parse(data.slice(6));
-                const content = json.choices?.[0]?.delta?.content;
-                if (content) {
-                  fullText += content;
-                }
-              } catch {}
-            }
-          }
-        }
-      }
-
-      if (fullText) {
-        addChatMessage({ speaker: "assistant", content: fullText });
-      }
-      setStatus("");
-    } catch (e) {
-      setStatus(`error: ${e}`);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
-    setStreaming(false);
+  };
+
+  const toggleContextField = (field: keyof ContextSelection) => {
+    setSideSelection({
+      ...sideContextSelection,
+      [field]: !sideContextSelection[field],
+    });
   };
 
   return (
@@ -123,8 +148,23 @@ export default function ChatPanel() {
         </button>
       </div>
 
+      {/* context checkboxes */}
+      <div className="flex gap-2 border-b border-[#313244] px-3 py-1.5">
+        {(["body", "appendix", "description", "note"] as const).map((field) => (
+          <label key={field} className="flex items-center gap-1 text-xs text-[#a6adc8] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={sideContextSelection[field]}
+              onChange={() => toggleContextField(field)}
+              className="accent-[#89b4fa]"
+            />
+            {field.charAt(0).toUpperCase() + field.slice(1)}
+          </label>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto p-3">
-        {chatMessages.length === 0 && (
+        {chatMessages.length === 0 && !chat.streaming && (
           <div className="py-8 text-center text-xs text-[#6c7086]">
             Ask questions about this paper
           </div>
@@ -142,11 +182,18 @@ export default function ChatPanel() {
             </div>
           </div>
         ))}
+        {chat.streaming && localBuffer && (
+          <div className="mb-3">
+            <div className="inline-block max-w-[90%] rounded-lg bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4]">
+              <pre className="whitespace-pre-wrap font-sans">{localBuffer}</pre>
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      {status && (
-        <div className="px-3 py-1 text-xs text-[#f9e2af]">{status}</div>
+      {chat.status && (
+        <div className="px-3 py-1 text-xs text-[#f9e2af]">{chat.status}</div>
       )}
 
       <div className="border-t border-[#313244] p-2">
@@ -154,20 +201,43 @@ export default function ChatPanel() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+            onKeyDown={handleKeyDown}
             placeholder="Ask about this paper..."
-            disabled={streaming}
+            disabled={chat.streaming}
             className="flex-1 rounded bg-[#313244] px-3 py-1.5 text-sm text-[#cdd6f4] outline-none disabled:opacity-50"
           />
-          <button
-            onClick={handleSend}
-            disabled={streaming || !input.trim()}
-            className="rounded bg-[#89b4fa] px-4 py-1.5 text-sm text-[#1e1e2e] disabled:opacity-50"
-          >
-            {streaming ? "..." : "Send"}
-          </button>
+          {chat.streaming ? (
+            <button
+              onClick={cancelChat}
+              className="rounded bg-[#f38ba8] px-4 py-1.5 text-sm text-[#1e1e2e]"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="rounded bg-[#89b4fa] px-4 py-1.5 text-sm text-[#1e1e2e] disabled:opacity-50"
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function buildContextString(
+  content: Record<string, string>,
+  sel: ContextSelection
+): string {
+  const parts: string[] = [];
+  if (sel.body && content["body"]) parts.push(`body:\n${content["body"]}`);
+  if (sel.appendix && content["appendix"])
+    parts.push(`appendix:\n${content["appendix"]}`);
+  if (sel.description && content["description"])
+    parts.push(`description:\n${content["description"]}`);
+  if (sel.note && content["note"]) parts.push(`note:\n${content["note"]}`);
+  return parts.join("\n\n");
 }
