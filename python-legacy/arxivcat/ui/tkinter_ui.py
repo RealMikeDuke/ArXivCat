@@ -1374,9 +1374,9 @@ class TkApp:
         appendix_path = paper_path / "appendix.tex"
         body = body_path.read_text(encoding="utf-8", errors="ignore") if body_path.exists() else ""
         appendix = appendix_path.read_text(encoding="utf-8", errors="ignore") if appendix_path.exists() else ""
-        context = body[:14000]
+        context = body
         if appendix.strip():
-            context += "\n\n[Appendix]\n" + appendix[:4000]
+            context += "\n\n[Appendix]\n" + appendix
         if not context.strip():
             raise ValueError("paper text is empty")
         self._root.after(0, self.add_log, f"[INFO] Building description.md for {arxiv_id}...")
@@ -2115,7 +2115,7 @@ class TkApp:
 
         if not self._chat_session_context_snapshot:
             preview_text = self.get_preview_text().strip()
-            self._chat_session_context_snapshot = preview_text[:12000] if preview_text else "(no preview loaded)"
+            self._chat_session_context_snapshot = preview_text if preview_text else "(no preview loaded)"
             self._chat_session_view_name = self.get_view_mode()
         context = self._chat_session_context_snapshot
         view_name = self._chat_session_view_name

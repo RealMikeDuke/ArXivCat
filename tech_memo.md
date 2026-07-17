@@ -267,7 +267,7 @@ Current behavior:
   - `Flash` → `deepseek-v4-flash`
   - `Pro` → `deepseek-v4-pro`
 - model preference is saved as `chat_model` in the same config file
-- sends the current preview text as context, truncated to about 12000 characters
+- sends the current preview text as context
 - includes the recent in-memory chat history, currently the last 12 entries
 - `stream_chat()` handles streaming output, calling `on_token` / `on_status` / `on_complete` callbacks
 - supports a stop button by setting an internal cancel flag checked in the stream loop
@@ -311,17 +311,8 @@ Current behavior:
 - reads `GEMINI_API_KEY` from the environment
 - model: `gemini-2.0-flash-lite`
 - receives context and history from the frontend
-- truncates context to about 8000 characters
 - includes the last 10 history messages
 - returns a normal JSON response rather than streaming
-
-Important limitation:
-
-- this is not full-paper retrieval
-- it is closer to “chat over current preview text”
-- long papers are truncated before sending to the model
-
-So if someone wants better paper QA in the future, the likely next step is chunking or retrieval, not simply making the prompt longer forever.
 
 ### 4.3 Description generation
 
@@ -331,7 +322,7 @@ Current behavior:
 
 - uses a fresh DeepSeek chat completion, not reusing side-chat history
 - forces `deepseek-v4-flash`, `max_tokens=1400`
-- reads `body.tex` (first 14000 chars) and optional `appendix.tex` (first 4000 chars)
+- reads `body.tex` and optional `appendix.tex`
 - system prompt instructs the model to produce structured markdown with these sections:
   - `# Overview`
   - `## Problem`

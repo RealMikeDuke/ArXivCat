@@ -24,23 +24,13 @@ pub async fn build_description(
 
     if body_path.exists() {
         let body = std::fs::read_to_string(&body_path)?;
-        let chunk = if body.len() > 14000 {
-            &body[..14000]
-        } else {
-            &body
-        };
-        context.push_str(chunk);
+        context.push_str(&body);
     }
 
     if appendix_path.exists() {
         let appendix = std::fs::read_to_string(&appendix_path)?;
-        let chunk = if appendix.len() > 4000 {
-            &appendix[..4000]
-        } else {
-            &appendix
-        };
         context.push_str("\n\n[Appendix]\n");
-        context.push_str(chunk);
+        context.push_str(&appendix);
     }
 
     if context.trim().is_empty() {
