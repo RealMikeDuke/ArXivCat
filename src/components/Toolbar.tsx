@@ -38,9 +38,9 @@ export default function Toolbar() {
         arxiv_id: string;
         status: string;
       }>("download:progress", (e) => {
-        useStore.setState((_) => ({
+        useStore.setState({
           download: { inProgress: true, current: e.payload.current, total: e.payload.total },
-        }));
+        });
         if (e.payload.status === "done") {
           useStore.getState().addLog(`[OK] ${e.payload.arxiv_id} processed`);
         } else if (e.payload.status === "error") {
@@ -50,9 +50,9 @@ export default function Toolbar() {
       unlisteners.push(unlistenProgress);
 
       const unlistenDone = await listen<{ count: number; total: number }>("download:done", (e) => {
-        useStore.setState((_) => ({
+        useStore.setState({
           download: { inProgress: false, current: 0, total: 0 },
-        }));
+        });
         useStore.getState().addLog(`[OK] Batch download: ${e.payload.count}/${e.payload.total} papers`);
         useStore.getState().refreshPapers();
       });

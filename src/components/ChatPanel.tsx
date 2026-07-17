@@ -38,8 +38,8 @@ export default function ChatPanel() {
         const { sessionId } = useStore.getState().chat;
         if (e.payload.session_id !== sessionId) return;
         setLocalBuffer((prev) => prev + e.payload.token);
-        useStore.setState((_) => ({
-          chat: { ...useStore.getState().chat, status: "" },
+        useStore.setState((s) => ({
+          chat: { ...s.chat, status: "" },
         }));
       });
       unlisteners.push(unlistenToken);
@@ -47,8 +47,8 @@ export default function ChatPanel() {
       const unlistenStatus = await listen<{ session_id: string; status: string }>("chat:status", (e) => {
         const { sessionId } = useStore.getState().chat;
         if (e.payload.session_id !== sessionId) return;
-        useStore.setState((_) => ({
-          chat: { ...useStore.getState().chat, status: e.payload.status },
+        useStore.setState((s) => ({
+          chat: { ...s.chat, status: e.payload.status },
         }));
       });
       unlisteners.push(unlistenStatus);
@@ -62,9 +62,9 @@ export default function ChatPanel() {
         }
         setLocalBuffer("");
         setTokenCount(0);
-        useStore.setState((_) => ({
+        useStore.setState({
           chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] },
-        }));
+        });
       });
       unlisteners.push(unlistenDone);
 
@@ -73,9 +73,9 @@ export default function ChatPanel() {
         if (e.payload.session_id !== sessionId) return;
         setLocalBuffer("");
         setTokenCount(0);
-        useStore.setState((_) => ({
+        useStore.setState({
           chat: { sessionId: null, streaming: false, status: `error: ${e.payload.error}`, bufferTokens: [] },
-        }));
+        });
       });
       unlisteners.push(unlistenError);
     };
