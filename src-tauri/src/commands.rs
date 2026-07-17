@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use arxivcat_core::error::{ArxivError, ErrorLevel};
 use arxivcat_core::{chat, config, extract, workspace};
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 pub struct CancelState(pub Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>);
 
@@ -111,7 +112,7 @@ pub async fn save_note(workspace_path: String, folder_name: String, content: Str
     let note_path = std::path::Path::new(&workspace_path)
         .join(&folder_name)
         .join("note.txt");
-    std::fs::write(&note_path, &content).map_err(map_err)?;
+    std::fs::write(&note_path, &content).map_err(|e| map_err(ArxivError::from(e)))?;
     Ok(())
 }
 
@@ -156,8 +157,8 @@ pub async fn start_chat(
         }));
     }
 
+    let sid = session_id.clone();
     tauri::async_runtime::spawn(async move {
-        let sid = session_id.clone();
         let result = chat::deepseek::stream_chat(
             &full_messages,
             &model,
@@ -325,7 +326,7 @@ pub async fn build_description(
 #[tauri::command]
 pub async fn get_token_status() -> Result<serde_json::Value, String> {
     let token = config::load_cached_token();
-    let masked = token.map(|t| {
+    let masked = token.as_ref().map(|t| {
         if t.len() > 8 {
             format!("{}...{}", &t[..4], &t[t.len() - 4..])
         } else {

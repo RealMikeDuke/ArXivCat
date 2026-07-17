@@ -9,7 +9,7 @@ pub async fn build_description(
     paper_dir: &Path,
     arxiv_id: &str,
     title: &str,
-    log_cb: Option<&dyn Fn(&str)>,
+    log_cb: Option<&(dyn Fn(&str) + Sync)>,
 ) -> Result<()> {
     let api_key = config::load_cached_token().ok_or_else(|| {
         ArxivError::Config("no DeepSeek API key configured".into())
