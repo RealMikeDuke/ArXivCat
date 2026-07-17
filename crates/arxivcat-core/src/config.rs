@@ -6,8 +6,11 @@ pub fn get_cache_dir() -> PathBuf {
     if let Ok(appdata) = std::env::var("APPDATA") {
         PathBuf::from(appdata).join("ArxivCat")
     } else {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+        dirs::data_dir()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+            })
             .join("ArxivCat")
     }
 }
