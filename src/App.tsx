@@ -4,17 +4,24 @@ import PaperList from "./components/PaperList";
 import Preview from "./components/Preview";
 import ChatPanel from "./components/ChatPanel";
 import GlobalChat from "./components/GlobalChat";
+import RippleBtn from "./components/Ripple";
 import { useStore } from "./store";
+import { useShallow } from "zustand/react/shallow";
 
 export default function App() {
-  const {
-    workspacePath,
-    papers,
-    currentPaper,
-    sideChatOpen,
-    globalChatOpen,
-    initWorkspace,
-  } = useStore();
+  const { workspacePath, papers, currentPaper, sideChatOpen, globalChatOpen, logMessages, logOpen, toggleLog, initWorkspace } = useStore(
+    useShallow((s) => ({
+      workspacePath: s.workspacePath,
+      papers: s.papers,
+      currentPaper: s.currentPaper,
+      sideChatOpen: s.sideChatOpen,
+      globalChatOpen: s.globalChatOpen,
+      logMessages: s.logMessages,
+      logOpen: s.logOpen,
+      toggleLog: s.toggleLog,
+      initWorkspace: s.initWorkspace,
+    }))
+  );
 
   const [leftWidth, setLeftWidth] = useState(250);
   const [rightWidth, setRightWidth] = useState(350);
@@ -63,7 +70,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-[#1e1e2e] text-[#cdd6f4]">
+    <div className="relative flex h-screen flex-col bg-[#1e1e2e] text-[#cdd6f4]">
       <div className="border-b border-[#313244] bg-[#181825] px-4 py-2">
         <Toolbar />
       </div>
@@ -107,6 +114,20 @@ export default function App() {
         )}
       </div>
       {globalChatOpen && <GlobalChat />}
+
+      {logOpen && (
+        <div className="border-t border-[#313244] bg-[#11111b]">
+          <div className="flex items-center justify-between px-3 py-1">
+            <span className="text-xs font-semibold text-[#a6adc8]">Log</span>
+            <RippleBtn onClick={toggleLog} className="text-xs text-[#6c7086] hover:text-[#cdd6f4]">Close</RippleBtn>
+          </div>
+          <div className="max-h-20 overflow-y-auto px-3 pb-1">
+            {logMessages.map((msg, i) => (
+              <div key={i} className="font-mono text-xs leading-5 text-[#a6adc8]">{msg}</div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

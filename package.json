@@ -1,7 +1,7 @@
 {
   "name": "arxivcat",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,13 +11,19 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "katex": "^0.18.0",
     "react": "^19",
     "react-dom": "^19",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "zustand": "^5"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.20",
+    "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -117,6 +117,16 @@ pub async fn save_note(workspace_path: String, folder_name: String, content: Str
 }
 
 #[tauri::command]
+pub async fn save_description(workspace_path: String, folder_name: String, content: String) -> Result<(), String> {
+    let desc_path = std::path::Path::new(&workspace_path)
+        .join(&folder_name)
+        .join("description.md");
+    std::fs::write(&desc_path, &content).map_err(|e| map_err(ArxivError::from(e)))?;
+    std::fs::write(desc_path.with_file_name(".description_ready"), "ok\n").map_err(|e| map_err(ArxivError::from(e)))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn strip_comments(content: String) -> Result<String, String> {
     let re = regex::Regex::new(r"(?<!\\)%.*").map_err(|e| e.to_string())?;
     let stripped = re.replace_all(&content, "").to_string();
@@ -385,7 +395,7 @@ pub async fn get_chat_sessions(session_dir: String) -> Result<Vec<serde_json::Va
 pub async fn save_chat_session_data(
     session_dir: String,
     session_data: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let path = std::path::PathBuf::from(
         session_data["path"]
             .as_str()
@@ -424,7 +434,9 @@ pub async fn save_chat_session_data(
     };
 
     chat::session::save_session(&mut session, Some(std::path::Path::new(&session_dir)))
-        .map_err(map_err)
+        .map_err(map_err)?;
+
+    Ok(session.path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -459,4 +471,75 @@ pub async fn open_paper_pdf(workspace_path: String, folder_name: String, arxiv_i
         }
     }
     open::that(format!("https://arxiv.org/pdf/{arxiv_id}")).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn read_pdf_base64(workspace_path: String, folder_name: String, arxiv_id: String) -> Result<String, String> {
+    let folder = std::path::Path::new(&workspace_path).join(&folder_name);
+    let pdf_path = folder.join(format!("{arxiv_id}.pdf"));
+    let path = if pdf_path.exists() { pdf_path } else {
+        let pattern = format!("{}/*.pdf", folder.display());
+        match glob::glob(&pattern).ok().and_then(|mut e| e.next()) {
+            Some(Ok(p)) => p,
+            _ => return Err("PDF not found".into()),
+        }
+    };
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
+}
+
+#[tauri::command]
+pub async fn download_paper(
+    raw_input: String,
+    workspace_path: String,
+) -> Result<PaperDto, String> {
+    let arxiv_id = arxivcat_core::extract::arxiv::extract_arxiv_id(&raw_input)
+        .ok_or_else(|| map_err(ArxivError::Other(format!("cannot parse arXiv ID from: {raw_input}"))))?;
+
+    let downloads_dir = config::get_downloads_dir();
+
+    let title = arxivcat_core::extract::arxiv::fetch_title_from_arxiv(&arxiv_id)
+        .await
+        .map_err(map_err)?
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let folder_name = format!(
+        "{}_{}",
+        arxiv_id.replace('.', "_"),
+        arxivcat_core::extract::arxiv::sanitize_filename(&title)
+    );
+    let out_dir = std::path::Path::new(&workspace_path).join(&folder_name);
+    std::fs::create_dir_all(&out_dir).map_err(|e| map_err(ArxivError::from(e)))?;
+
+    workspace::ensure_paper_meta_files(&out_dir).map_err(map_err)?;
+
+    let (paper_dir_opt, _) =
+        arxivcat_core::extract::source::download_source(&arxiv_id, &downloads_dir)
+            .await
+            .map_err(map_err)?;
+
+    let paper_dir = paper_dir_opt.ok_or_else(|| {
+        map_err(ArxivError::Extraction("source download returned None".into()))
+    })?;
+
+    arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &out_dir)
+        .map_err(map_err)?;
+
+    let _ = arxivcat_core::extract::source::download_pdf(&arxiv_id, &out_dir).await;
+
+    let _ = chat::description::build_description(&out_dir, &arxiv_id, &title, None).await;
+
+    let has_body = out_dir.join("body.tex").exists();
+    let desc_ready = out_dir.join("description.md").exists()
+        && out_dir.join(".description_ready").exists();
+    let is_complete = has_body && desc_ready;
+
+    Ok(PaperDto {
+        arxiv_id,
+        title,
+        folder_name,
+        has_body,
+        description_ready: desc_ready,
+        is_complete,
+    })
 }

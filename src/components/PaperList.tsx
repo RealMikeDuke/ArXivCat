@@ -1,7 +1,9 @@
 import { useStore } from "../store";
+import { useShallow } from "zustand/react/shallow";
+import RippleBtn from "./Ripple";
 
 export default function PaperList() {
-  const { papers, currentPaper, selectPaper } = useStore();
+  const { papers, currentPaper, selectPaper } = useStore(useShallow((s) => ({ papers: s.papers, currentPaper: s.currentPaper, selectPaper: s.selectPaper })));
 
   if (papers.length === 0) {
     return (
@@ -19,7 +21,7 @@ export default function PaperList() {
       {papers.map((p) => {
         const isSelected = currentPaper?.folder_name === p.folder_name;
         return (
-          <button
+          <RippleBtn
             key={p.folder_name}
             onClick={() => selectPaper(p)}
             className={`px-3 py-2 text-left text-sm transition-colors ${
@@ -45,7 +47,7 @@ export default function PaperList() {
                 <div className="truncate text-xs">{p.title}</div>
               </div>
             </div>
-          </button>
+          </RippleBtn>
         );
       })}
     </div>

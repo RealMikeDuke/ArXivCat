@@ -1,107 +1,52 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useStore, ContextSelection } from "../store";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useChatSessions } from "../hooks/useChatSessions";
+import ChatSessionBar from "./ChatSessionBar";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { useShallow } from "zustand/react/shallow";
+import RippleBtn from "./Ripple";
 
 export default function ChatPanel() {
+  const { workspacePath, currentPaper, chatModel, deepThinking, sideContextSelection, previewContent, setChatModel, toggleDeepThinking, setSideSelection } = useStore(
+    useShallow((s) => ({
+      workspacePath: s.workspacePath,
+      currentPaper: s.currentPaper,
+      chatModel: s.chatModel,
+      deepThinking: s.deepThinking,
+      sideContextSelection: s.sideContextSelection,
+      previewContent: s.previewContent,
+      setChatModel: s.setChatModel,
+      toggleDeepThinking: s.toggleDeepThinking,
+      setSideSelection: s.setSideSelection,
+    }))
+  );
+
+  const sessionDir = workspacePath && currentPaper
+    ? `${workspacePath}/${currentPaper.folder_name}/arxiv_chats`
+    : null;
+
   const {
-    chatMessages,
-    chatModel,
-    deepThinking,
-    sideContextSelection,
-    chat,
-    previewContent,
-    addChatMessage,
-    clearChat,
-    setChatModel,
-    toggleDeepThinking,
-    setSideSelection,
-    sendChat,
-    cancelChat,
-  } = useStore();
+    sessions, activeIdx, messages, streaming, status, localBuffer,
+    newSession, switchSession, renameSession, deleteSession,
+    sendMessage, cancelChat,
+  } = useChatSessions(sessionDir, chatModel, deepThinking);
 
   const [input, setInput] = useState("");
-  const [localBuffer, setLocalBuffer] = useState("");
-  const setTokenCount = useState(0)[1];
   const bottomRef = useRef<HTMLDivElement>(null);
-  const localRef = useRef(localBuffer);
-  localRef.current = localBuffer;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, localBuffer]);
-
-  useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-
-    const setup = async () => {
-      const unlistenToken = await listen<{ session_id: string; token: string }>("chat:token", (e) => {
-        const { sessionId } = useStore.getState().chat;
-        if (e.payload.session_id !== sessionId) return;
-        setLocalBuffer((prev) => prev + e.payload.token);
-        useStore.setState((s) => ({
-          chat: { ...s.chat, status: "" },
-        }));
-      });
-      unlisteners.push(unlistenToken);
-
-      const unlistenStatus = await listen<{ session_id: string; status: string }>("chat:status", (e) => {
-        const { sessionId } = useStore.getState().chat;
-        if (e.payload.session_id !== sessionId) return;
-        useStore.setState((s) => ({
-          chat: { ...s.chat, status: e.payload.status },
-        }));
-      });
-      unlisteners.push(unlistenStatus);
-
-      const unlistenDone = await listen<{ session_id: string; text: string }>("chat:done", (e) => {
-        const { sessionId, bufferTokens } = useStore.getState().chat;
-        if (e.payload.session_id !== sessionId) return;
-        const finalText = (localRef.current + (bufferTokens.join("")));
-        if (finalText) {
-          useStore.getState().addChatMessage({ speaker: "assistant", content: finalText });
-        }
-        setLocalBuffer("");
-        setTokenCount(0);
-        useStore.setState({
-          chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] },
-        });
-      });
-      unlisteners.push(unlistenDone);
-
-      const unlistenError = await listen<{ session_id: string; error: string }>("chat:error", (e) => {
-        const { sessionId } = useStore.getState().chat;
-        if (e.payload.session_id !== sessionId) return;
-        setLocalBuffer("");
-        setTokenCount(0);
-        useStore.setState({
-          chat: { sessionId: null, streaming: false, status: `error: ${e.payload.error}`, bufferTokens: [] },
-        });
-      });
-      unlisteners.push(unlistenError);
-    };
-
-    setup();
-
-    return () => {
-      unlisteners.forEach((u) => u());
-    };
-  }, []);
+  }, [messages, localBuffer]);
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || chat.streaming) return;
+    if (!input.trim() || streaming) return;
     const msg = input;
     setInput("");
-
-    addChatMessage({ speaker: "user", content: msg });
     const context = buildContextString(previewContent, sideContextSelection);
-
-    const newMessages = [
-      ...chatMessages,
-      { speaker: "user", content: msg },
-    ];
-
-    await sendChat(newMessages, context);
-  }, [input, chat.streaming, chatMessages, previewContent, sideContextSelection, addChatMessage, sendChat]);
+    await sendMessage(msg, context);
+  }, [input, streaming, previewContent, sideContextSelection, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -120,7 +65,7 @@ export default function ChatPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-[#313244] px-3 py-2">
-        <span className="text-xs font-semibold text-[#a6adc8]">Chat</span>
+        <span className="text-xs font-semibold text-[#a6adc8]">Side Chat</span>
         <div className="flex-1" />
         <select
           value={chatModel}
@@ -130,25 +75,28 @@ export default function ChatPanel() {
           <option value="Flash">Flash</option>
           <option value="Pro">Pro</option>
         </select>
-        <button
+        <RippleBtn
           onClick={toggleDeepThinking}
-          className={`rounded px-2 py-0.5 text-xs ${
+          className={`rounded px-2 py-0.5 text-xs transition-colors duration-150 ${
             deepThinking
               ? "bg-[#89b4fa] text-[#1e1e2e]"
               : "bg-[#313244] text-[#a6adc8]"
           }`}
         >
           Deep
-        </button>
-        <button
-          onClick={clearChat}
-          className="rounded bg-[#313244] px-2 py-0.5 text-xs text-[#a6adc8] hover:text-[#cdd6f4]"
-        >
-          Clear
-        </button>
+        </RippleBtn>
       </div>
 
-      {/* context checkboxes */}
+      <ChatSessionBar
+        sessions={sessions}
+        activeIdx={activeIdx}
+        onNew={() => newSession("paper")}
+        onSwitch={switchSession}
+        onRename={renameSession}
+        onDelete={deleteSession}
+        kind="paper"
+      />
+
       <div className="flex gap-2 border-b border-[#313244] px-3 py-1.5">
         {(["body", "appendix", "description", "note"] as const).map((field) => (
           <label key={field} className="flex items-center gap-1 text-xs text-[#a6adc8] cursor-pointer">
@@ -164,12 +112,12 @@ export default function ChatPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {chatMessages.length === 0 && !chat.streaming && (
+        {messages.length === 0 && !streaming && (
           <div className="py-8 text-center text-xs text-[#6c7086]">
             Ask questions about this paper
           </div>
         )}
-        {chatMessages.map((m, i) => (
+        {messages.map((m, i) => (
           <div key={i} className={`mb-3 ${m.speaker === "user" ? "text-right" : ""}`}>
             <div
               className={`inline-block max-w-[90%] rounded-lg px-3 py-2 text-sm ${
@@ -178,11 +126,19 @@ export default function ChatPanel() {
                   : "bg-[#313244] text-[#cdd6f4]"
               }`}
             >
-              <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
+              {m.speaker === "user" ? (
+                <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
+              ) : (
+                <div className="prose prose-sm prose-invert max-w-none [&_.katex-display]:my-2 [&_.katex]:text-inherit [&_p]:leading-relaxed [&_code]:bg-[#45475a] [&_code]:rounded [&_code]:px-1 [&_pre]:bg-[#11111b] [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_a]:text-[#89b4fa]">
+                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                    {m.content}
+                  </ReactMarkdown>
+                </div>
+              )}
             </div>
           </div>
         ))}
-        {chat.streaming && localBuffer && (
+        {streaming && localBuffer && (
           <div className="mb-3">
             <div className="inline-block max-w-[90%] rounded-lg bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4]">
               <pre className="whitespace-pre-wrap font-sans">{localBuffer}</pre>
@@ -192,8 +148,8 @@ export default function ChatPanel() {
         <div ref={bottomRef} />
       </div>
 
-      {chat.status && (
-        <div className="px-3 py-1 text-xs text-[#f9e2af]">{chat.status}</div>
+      {status && (
+        <div className="px-3 py-1 text-xs text-[#f9e2af]">{status}</div>
       )}
 
       <div className="border-t border-[#313244] p-2">
@@ -203,24 +159,24 @@ export default function ChatPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about this paper..."
-            disabled={chat.streaming}
+            disabled={streaming}
             className="flex-1 rounded bg-[#313244] px-3 py-1.5 text-sm text-[#cdd6f4] outline-none disabled:opacity-50"
           />
-          {chat.streaming ? (
-            <button
+          {streaming ? (
+            <RippleBtn
               onClick={cancelChat}
               className="rounded bg-[#f38ba8] px-4 py-1.5 text-sm text-[#1e1e2e]"
             >
               Stop
-            </button>
+            </RippleBtn>
           ) : (
-            <button
+            <RippleBtn
               onClick={handleSend}
               disabled={!input.trim()}
               className="rounded bg-[#89b4fa] px-4 py-1.5 text-sm text-[#1e1e2e] disabled:opacity-50"
             >
               Send
-            </button>
+            </RippleBtn>
           )}
         </div>
       </div>

@@ -2,20 +2,28 @@ import { useState, useEffect } from "react";
 import { useStore } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import RippleBtn from "./Ripple";
+import { useShallow } from "zustand/react/shallow";
 
 export default function Toolbar() {
-  const {
-    workspacePath,
-    openWorkspace,
-    scanPdfs,
-    downloadAll,
-    toggleSideChat,
-    toggleGlobalChat,
-    currentPaper,
-    sideChatOpen,
-    globalChatOpen,
-    download,
-  } = useStore();
+  const { workspacePath, currentPaper, sideChatOpen, globalChatOpen, toggleLog, download, openWorkspace, scanPdfs, downloadAll, downloadPaper, toggleSideChat, toggleGlobalChat } = useStore(
+    useShallow((s) => ({
+      workspacePath: s.workspacePath,
+      currentPaper: s.currentPaper,
+      sideChatOpen: s.sideChatOpen,
+      globalChatOpen: s.globalChatOpen,
+      toggleLog: s.toggleLog,
+      download: s.download,
+      openWorkspace: s.openWorkspace,
+      scanPdfs: s.scanPdfs,
+      downloadAll: s.downloadAll,
+      downloadPaper: s.downloadPaper,
+      toggleSideChat: s.toggleSideChat,
+      toggleGlobalChat: s.toggleGlobalChat,
+    }))
+  );
+
+  const [arxivInput, setArxivInput] = useState("");
 
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
@@ -92,70 +100,99 @@ export default function Toolbar() {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        onClick={handleOpenFolder}
-        className="rounded bg-[#45475a] px-3 py-1.5 text-sm text-[#cdd6f4] hover:bg-[#585b70]"
-      >
-        Open Folder
-      </button>
-
       {workspacePath && (
         <>
-          <button
+          <RippleBtn
             onClick={scanPdfs}
             className="rounded bg-[#45475a] px-3 py-1.5 text-sm text-[#cdd6f4] hover:bg-[#585b70]"
           >
             Scan PDFs
-          </button>
+          </RippleBtn>
           <span className="flex items-center gap-1">
-            <button
+            <RippleBtn
               onClick={downloadAll}
               disabled={download.inProgress}
               className="rounded bg-[#45475a] px-3 py-1.5 text-sm text-[#cdd6f4] hover:bg-[#585b70] disabled:opacity-50"
             >
               {download.inProgress ? `${download.current}/${download.total}` : "Download All"}
-            </button>
+            </RippleBtn>
           </span>
+          <div className="flex items-center gap-1">
+            <input
+              value={arxivInput}
+              onChange={(e) => setArxivInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && arxivInput.trim()) {
+                  downloadPaper(arxivInput.trim());
+                  setArxivInput("");
+                }
+              }}
+              placeholder="arXiv ID or URL..."
+              className="w-48 rounded bg-[#313244] px-2 py-1.5 text-sm text-[#cdd6f4] outline-none placeholder:text-[#6c7086]"
+            />
+            <RippleBtn
+              onClick={() => {
+                if (arxivInput.trim()) {
+                  downloadPaper(arxivInput.trim());
+                  setArxivInput("");
+                }
+              }}
+              className="rounded bg-[#89b4fa] px-3 py-1.5 text-sm text-[#1e1e2e] hover:bg-[#b4d0fb]"
+            >
+              Download
+            </RippleBtn>
+          </div>
           {currentPaper && (
-            <button
+            <RippleBtn
               onClick={toggleSideChat}
-              className={`rounded px-3 py-1.5 text-sm ${
+              className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
                 sideChatOpen
                   ? "bg-[#89b4fa] text-[#1e1e2e]"
                   : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
               }`}
             >
-              Chat
-            </button>
+              Side Chat
+            </RippleBtn>
           )}
-          <button
+          <RippleBtn
             onClick={toggleGlobalChat}
-            className={`rounded px-3 py-1.5 text-sm ${
+            className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
               globalChatOpen
                 ? "bg-[#89b4fa] text-[#1e1e2e]"
                 : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
             }`}
           >
             Global Chat
-          </button>
+          </RippleBtn>
           <div className="flex-1" />
-          <span className="truncate text-xs text-[#a6adc8]">
+          <RippleBtn
+            onClick={handleOpenFolder}
+            className="max-w-[200px] truncate rounded bg-[#45475a] px-2 py-1.5 text-xs text-[#cdd6f4] hover:bg-[#585b70]"
+            title="Click to change workspace folder"
+          >
             {workspacePath}
-          </span>
+          </RippleBtn>
         </>
       )}
 
+      <RippleBtn
+        onClick={toggleLog}
+        className="rounded px-2 py-1.5 text-xs bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+      >
+        Log
+      </RippleBtn>
+
       <div className="relative">
-        <button
+        <RippleBtn
           onClick={() => setShowTokenInput(!showTokenInput)}
           className={`rounded px-2 py-1.5 text-xs ${
             tokenStatus?.has_token
               ? "bg-[#a6e3a1] text-[#1e1e2e]"
-              : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+              : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
           }`}
         >
           Token
-        </button>
+        </RippleBtn>
 
         {showTokenInput && (
           <div className="absolute right-0 top-full z-50 mt-1 rounded border border-[#45475a] bg-[#1e1e2e] p-3 shadow-lg">
@@ -171,12 +208,12 @@ export default function Toolbar() {
               placeholder="DeepSeek API Token"
               className="mb-2 w-64 rounded bg-[#313244] px-2 py-1 text-sm text-[#cdd6f4] outline-none"
             />
-            <button
+            <RippleBtn
               onClick={handleSetToken}
               className="rounded bg-[#89b4fa] px-3 py-1 text-sm text-[#1e1e2e]"
             >
               Save
-            </button>
+            </RippleBtn>
           </div>
         )}
       </div>

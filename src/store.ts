@@ -10,7 +10,7 @@ export interface Paper {
   is_complete: boolean;
 }
 
-export type ViewMode = "body" | "appendix" | "note" | "description";
+export type ViewMode = "body" | "appendix" | "note" | "description" | "pdf";
 
 export interface ChatMessage {
   speaker: string;
@@ -63,6 +63,8 @@ interface StoreState {
   chatModel: string;
   deepThinking: boolean;
   logMessages: string[];
+  logOpen: boolean;
+  drafts: Record<string, string>;
 
   sideContextSelection: ContextSelection;
   globalContextSelection: Record<string, ContextSelection>;
@@ -76,18 +78,23 @@ interface StoreState {
   selectPaper: (paper: Paper) => Promise<void>;
   switchView: (view: ViewMode) => void;
   saveNote: (content: string) => Promise<void>;
+  saveDescription: (content: string) => Promise<void>;
   stripComments: () => Promise<void>;
   scanPdfs: () => Promise<void>;
   downloadAll: () => Promise<void>;
-  extractPaper: (arxivId: string) => Promise<void>;
+  downloadPaper: (arxivId: string) => Promise<void>;
   toggleSideChat: () => void;
   toggleGlobalChat: () => void;
   addLog: (msg: string) => void;
+  toggleLog: () => void;
   setChatModel: (model: string) => void;
   toggleDeepThinking: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   clearChat: () => void;
 
+  getDraftKey: () => string | null;
+  saveDraft: (key: string, content: string) => void;
+  clearDraft: (key: string) => void;
   setSideSelection: (sel: ContextSelection) => void;
   setGlobalSelection: (folderName: string, sel: ContextSelection) => void;
   sendChat: (messages: ChatMessage[], context: string) => Promise<void>;
@@ -106,6 +113,17 @@ export const useStore = create<StoreState>((set, get) => ({
   chatModel: "Flash",
   deepThinking: true,
   logMessages: [],
+  logOpen: false,
+  drafts: (() => {
+    try {
+      const d: Record<string, string> = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k?.startsWith("ac_draft_")) d[k.slice(9)] = localStorage.getItem(k) || "";
+      }
+      return d;
+    } catch { return {}; }
+  })(),
 
   sideContextSelection: { ...DEFAULT_SIDE_SELECTION },
   globalContextSelection: {},
@@ -182,6 +200,23 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
 
+  saveDescription: async (content: string) => {
+    const { workspacePath, currentPaper } = get();
+    if (!workspacePath || !currentPaper) return;
+    try {
+      await invoke("save_description", {
+        workspacePath,
+        folderName: currentPaper.folder_name,
+        content,
+      });
+      set((s) => ({
+        previewContent: { ...s.previewContent, description: content },
+      }));
+    } catch (e) {
+      get().addLog(`[ERROR] Failed to save description: ${e}`);
+    }
+  },
+
   stripComments: async () => {
     const { previewContent, currentView } = get();
     const content = previewContent[currentView];
@@ -222,31 +257,24 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
 
-  extractPaper: async (arxivId: string) => {
-    get().addLog(`[INFO] Extracting ${arxivId}...`);
+  downloadPaper: async (rawInput: string) => {
+    const { workspacePath } = get();
+    if (!workspacePath) {
+      get().addLog("[ERROR] No workspace open");
+      return;
+    }
+    get().addLog(`[INFO] Downloading ${rawInput}...`);
     try {
-      await invoke<string>("extract_paper", { arxivId });
-      get().addLog(`[OK] Extracted ${arxivId}`);
-
-      // trigger description generation if workspace + paper available
-      const { workspacePath, papers } = get();
-      if (workspacePath) {
-        const paper = papers.find((p) => p.arxiv_id === arxivId);
-        if (paper) {
-          const paperDir = `${workspacePath}/${paper.folder_name}`;
-          invoke("build_description", {
-            paperDir,
-            arxivId,
-            title: paper.title,
-          })
-            .then(() => get().addLog(`[OK] Description generated for ${arxivId}`))
-            .catch(() => {});
-        }
-      }
-
+      const paper = await invoke<Paper>("download_paper", {
+        rawInput,
+        workspacePath,
+      });
+      get().addLog(`[OK] ${paper.arxiv_id} → ${paper.folder_name}`);
       await get().refreshPapers();
+      set({ currentPaper: paper, previewContent: {} });
+      await get().selectPaper(paper);
     } catch (e) {
-      get().addLog(`[ERROR] Extraction failed: ${e}`);
+      get().addLog(`[ERROR] Download failed: ${e}`);
     }
   },
 
@@ -257,6 +285,7 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({
       logMessages: [...s.logMessages.slice(-99), msg],
     })),
+  toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
 
   setChatModel: (model: string) => set({ chatModel: model }),
   toggleDeepThinking: () => set((s) => ({ deepThinking: !s.deepThinking })),
@@ -265,6 +294,27 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
 
   clearChat: () => set({ chatMessages: [], chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] } }),
+
+  getDraftKey: () => {
+    const { currentPaper, currentView } = get();
+    if (!currentPaper) return null;
+    const v = currentView === "note" || currentView === "description" ? currentView : null;
+    return v ? `${currentPaper.folder_name}_${v}` : null;
+  },
+
+  saveDraft: (key: string, content: string) => {
+    set((s) => ({ drafts: { ...s.drafts, [key]: content } }));
+    try { localStorage.setItem(`ac_draft_${key}`, content); } catch {}
+  },
+
+  clearDraft: (key: string) => {
+    set((s) => {
+      const next = { ...s.drafts };
+      delete next[key];
+      return { drafts: next };
+    });
+    try { localStorage.removeItem(`ac_draft_${key}`); } catch {}
+  },
 
   setSideSelection: (sel: ContextSelection) => set({ sideContextSelection: sel }),
 

@@ -84,6 +84,7 @@ pub fn sanitize_filename(name: &str) -> String {
         .chars()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_ascii_control() => '_',
             other => other,
         })
         .collect();
@@ -93,7 +94,13 @@ pub fn sanitize_filename(name: &str) -> String {
         .replace_all(&filtered, "_")
         .to_string();
 
-    let trimmed = collapsed.trim_matches('_').to_string();
+    let trimmed = collapsed
+        .trim_matches(|c: char| c == '_' || c == '.' || c == ' ' || c == '-')
+        .to_string();
+
+    if trimmed.is_empty() {
+        return "untitled".to_string();
+    }
 
     if trimmed.len() > 80 {
         trimmed[..80].to_string()

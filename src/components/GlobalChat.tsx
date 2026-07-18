@@ -1,34 +1,43 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useStore, DEFAULT_GLOBAL_SELECTION } from "../store";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useChatSessions } from "../hooks/useChatSessions";
+import ChatSessionBar from "./ChatSessionBar";
+import { useShallow } from "zustand/react/shallow";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import RippleBtn from "./Ripple";
 
 export default function GlobalChat() {
-  const {
-    chatModel,
-    toggleGlobalChat,
-    papers,
-    workspacePath,
-    globalContextSelection,
-    setGlobalSelection,
-  } = useStore();
+  const { chatModel, toggleGlobalChat, papers, workspacePath, globalContextSelection, setGlobalSelection } = useStore(
+    useShallow((s) => ({
+      chatModel: s.chatModel,
+      toggleGlobalChat: s.toggleGlobalChat,
+      papers: s.papers,
+      workspacePath: s.workspacePath,
+      globalContextSelection: s.globalContextSelection,
+      setGlobalSelection: s.setGlobalSelection,
+    }))
+  );
 
-  const [messages, setMessages] = useState<{ speaker: string; content: string }[]>([]);
+  const sessionDir = workspacePath ? `${workspacePath}/arxivcat_global_chats` : null;
+
+  const {
+    sessions, activeIdx, messages, streaming, status, localBuffer,
+    newSession, switchSession, renameSession, deleteSession,
+    sendMessage, cancelChat,
+  } = useChatSessions(sessionDir, chatModel, true);
+
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
-  const [localBuffer, setLocalBuffer] = useState("");
-  const [paperContents, setPaperContents] = useState<
-    Record<string, Record<string, string>>
-  >({});
-  const setTokenCount = useState(0)[1];
+  const [paperContents, setPaperContents] = useState<Record<string, Record<string, string>>>({});
   const [showConfig, setShowConfig] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const bufferRef = useRef(localBuffer);
-  bufferRef.current = localBuffer;
 
-  // Load paper contents on mount
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, localBuffer]);
+
   useEffect(() => {
     const loadAll = async () => {
       const contents: Record<string, Record<string, string>> = {};
@@ -43,70 +52,16 @@ export default function GlobalChat() {
         } catch {}
       }
       setPaperContents(contents);
-
-      // init default selections
       for (const p of papers) {
         if (!globalContextSelection[p.folder_name]) {
           setGlobalSelection(p.folder_name, { ...DEFAULT_GLOBAL_SELECTION });
         }
       }
     };
-    loadAll();
-  }, [papers, workspacePath]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, localBuffer]);
-
-  useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-
-    const setup = async () => {
-      const unlistenToken = await listen<{ session_id: string; token: string }>("chat:token", (e) => {
-        if (e.payload.session_id !== sessionId) return;
-        setLocalBuffer((prev) => prev + e.payload.token);
-        setStatus("");
-      });
-      unlisteners.push(unlistenToken);
-
-      const unlistenStatus = await listen<{ session_id: string; status: string }>("chat:status", (e) => {
-        if (e.payload.session_id !== sessionId) return;
-        setStatus(e.payload.status);
-      });
-      unlisteners.push(unlistenStatus);
-
-      const unlistenDone = await listen<{ session_id: string; text: string }>("chat:done", (e) => {
-        if (e.payload.session_id !== sessionId) return;
-        const finalText = bufferRef.current;
-        if (finalText) {
-          setMessages((prev) => [...prev, { speaker: "assistant", content: finalText }]);
-        }
-        setLocalBuffer("");
-        setSessionId(null);
-        setStreaming(false);
-        setTokenCount(0);
-      });
-      unlisteners.push(unlistenDone);
-
-      const unlistenError = await listen<{ session_id: string; error: string }>("chat:error", (e) => {
-        if (e.payload.session_id !== sessionId) return;
-        setLocalBuffer("");
-        setSessionId(null);
-        setStreaming(false);
-        setTokenCount(0);
-        setStatus(`error: ${e.payload.error}`);
-      });
-      unlisteners.push(unlistenError);
-    };
-
-    if (sessionId) {
-      setup();
+    if (workspacePath && papers.length > 0) {
+      loadAll();
     }
-
-    return () => {
-      unlisteners.forEach((u) => u());
-    };
-  }, [sessionId]);
+  }, [papers, workspacePath]);
 
   const buildGlobalContext = useCallback((): string => {
     const parts: string[] = [];
@@ -131,49 +86,10 @@ export default function GlobalChat() {
     if (!input.trim() || streaming) return;
     const msg = input;
     setInput("");
-
-    const newMessages = [...messages, { speaker: "user", content: msg }] as {
-      speaker: string;
-      content: string;
-    }[];
-    setMessages(newMessages);
-
-    setStreaming(true);
-    setStatus("thinking...");
     setShowConfig(false);
-
-    try {
-      const apiMessages = newMessages.map((m) => ({
-        role: m.speaker === "user" ? "user" : "assistant",
-        content: m.content,
-      }));
-      const context = buildGlobalContext();
-
-      const { session_id } = await invoke<{ session_id: string }>("start_chat", {
-        messages: apiMessages,
-        model: chatModel,
-        deepThinking: true,
-        paperContext: context || null,
-      });
-
-      setSessionId(session_id);
-    } catch (e) {
-      setStatus(`error: ${e}`);
-      setStreaming(false);
-    }
-  }, [input, streaming, messages, chatModel, buildGlobalContext]);
-
-  const handleCancel = useCallback(async () => {
-    if (sessionId) {
-      try {
-        await invoke("cancel_chat", { sessionId });
-      } catch {}
-    }
-    setSessionId(null);
-    setStreaming(false);
-    setStatus("cancelled");
-    setLocalBuffer("");
-  }, [sessionId]);
+    const context = buildGlobalContext();
+    await sendMessage(msg, context);
+  }, [input, streaming, buildGlobalContext, sendMessage]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -182,19 +98,29 @@ export default function GlobalChat() {
           <span className="font-semibold text-[#cdd6f4]">Global Chat</span>
           <span className="text-xs text-[#6c7086]">{papers.length} papers</span>
           <div className="flex-1" />
-          <button
+          <RippleBtn
             onClick={() => setShowConfig(!showConfig)}
             className="rounded bg-[#313244] px-2 py-0.5 text-xs text-[#a6adc8] hover:text-[#cdd6f4]"
           >
             {showConfig ? "Hide Config" : "Configure Context"}
-          </button>
-          <button
+          </RippleBtn>
+          <RippleBtn
             onClick={toggleGlobalChat}
             className="rounded bg-[#313244] px-3 py-1 text-xs text-[#a6adc8] hover:text-[#cdd6f4]"
           >
             Close
-          </button>
+          </RippleBtn>
         </div>
+
+        <ChatSessionBar
+          sessions={sessions}
+          activeIdx={activeIdx}
+          onNew={() => newSession("global")}
+          onSwitch={switchSession}
+          onRename={renameSession}
+          onDelete={deleteSession}
+          kind="global"
+        />
 
         {showConfig && (
           <div className="max-h-[40%] overflow-y-auto border-b border-[#313244] px-4 py-2">
@@ -245,7 +171,15 @@ export default function GlobalChat() {
                     : "bg-[#313244] text-[#cdd6f4]"
                 }`}
               >
-                <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
+                {m.speaker === "user" ? (
+                  <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
+                ) : (
+                  <div className="prose prose-sm prose-invert max-w-none [&_.katex-display]:my-2 [&_.katex]:text-inherit [&_p]:leading-relaxed [&_code]:bg-[#45475a] [&_code]:rounded [&_code]:px-1 [&_pre]:bg-[#11111b] [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_a]:text-[#89b4fa]">
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {m.content}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -274,20 +208,20 @@ export default function GlobalChat() {
               className="flex-1 rounded bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4] outline-none"
             />
             {streaming ? (
-              <button
-                onClick={handleCancel}
+              <RippleBtn
+                onClick={cancelChat}
                 className="rounded bg-[#f38ba8] px-4 py-2 text-sm text-[#1e1e2e]"
               >
                 Stop
-              </button>
+              </RippleBtn>
             ) : (
-              <button
+              <RippleBtn
                 onClick={handleSend}
                 disabled={streaming || !input.trim()}
                 className="rounded bg-[#89b4fa] px-4 py-2 text-sm text-[#1e1e2e] disabled:opacity-50"
               >
                 Send
-              </button>
+              </RippleBtn>
             )}
           </div>
         </div>

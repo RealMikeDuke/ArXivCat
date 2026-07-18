@@ -14,6 +14,7 @@ pub fn run() {
             open_workspace,
             load_paper,
             save_note,
+            save_description,
             strip_comments,
             scan_pdfs,
             download_all,
@@ -30,6 +31,8 @@ pub fn run() {
             get_last_workspace,
             open_paper_folder,
             open_paper_pdf,
+            read_pdf_base64,
+            download_paper,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

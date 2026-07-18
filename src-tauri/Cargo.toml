@@ -1,6 +1,6 @@
 [package]
 name = "arxivcat-gui"
-version = "0.1.0"
+version = "0.8.0"
 edition = "2021"
 description = "Tauri 2 GUI for ArxivCat"
 
@@ -17,6 +17,7 @@ reqwest = { workspace = true }
 regex = { workspace = true }
 open = "5"
 glob = { workspace = true }
+base64 = { workspace = true }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
