@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
@@ -5,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::ContextSelection;
 use crate::error::Result;
+
+fn default_reasoning_effort() -> String {
+    "low".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -20,7 +25,10 @@ pub struct ChatSession {
     pub title: String,
     pub kind: String,
     pub model: String,
-    pub deep_thinking: bool,
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
+    #[serde(default)]
+    pub locked_fields: HashMap<String, Vec<String>>,
     pub messages: Vec<ChatMessage>,
     pub context_selection: ContextSelection,
     pub context_snapshot: String,
@@ -46,7 +54,8 @@ impl ChatSession {
             title,
             kind: kind.to_string(),
             model: "Flash".to_string(),
-            deep_thinking: true,
+            reasoning_effort: "low".to_string(),
+            locked_fields: HashMap::new(),
             messages: Vec::new(),
             context_selection: ContextSelection::default(),
             context_snapshot: String::new(),

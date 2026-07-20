@@ -1,6 +1,7 @@
 import { useStore } from "../store";
 import { useShallow } from "zustand/react/shallow";
 import RippleBtn from "./Ripple";
+import Tooltip from "./Tooltip";
 
 export default function PaperList() {
   const { papers, currentPaper, selectPaper } = useStore(useShallow((s) => ({ papers: s.papers, currentPaper: s.currentPaper, selectPaper: s.selectPaper })));
@@ -44,7 +45,11 @@ export default function PaperList() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-mono text-[#89b4fa]">{p.arxiv_id}</div>
-                <div className="truncate text-xs">{p.title}</div>
+                <Tooltip content={
+                  <><span className="text-[#6c7086]">{p.arxiv_id}</span><br /><span className="text-[#cdd6f4]">{p.title}</span></>
+                }>
+                  <div className="truncate text-xs">{p.title}</div>
+                </Tooltip>
               </div>
             </div>
           </RippleBtn>

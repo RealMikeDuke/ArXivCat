@@ -89,7 +89,7 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
                 }
                 "thinking" => {
                     deep_thinking = !deep_thinking;
-                    println!("{} deep thinking: {deep_thinking}", gray("toggled"));
+                    println!("{} reasoning effort: {}", gray("toggled"), if deep_thinking { "high" } else { "off" });
                     continue;
                 }
                 "context" => {
@@ -126,7 +126,7 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
                     let mut session = chat::session::ChatSession::new("paper", &paper.arxiv_id);
                     session.messages = history.clone();
                     session.model = model.clone();
-                    session.deep_thinking = deep_thinking;
+                    session.reasoning_effort = if deep_thinking { "high".to_string() } else { "off".to_string() };
                     session.context_selection = selection.clone();
                     if let Err(e) = chat::session::save_session(&mut session, Some(&chat_dir)) {
                         eprintln!("error saving session: {e}");
@@ -152,7 +152,7 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
                                     let s = &sessions[idx];
                                     history = s.messages.clone();
                                     model = s.model.clone();
-                                    deep_thinking = s.deep_thinking;
+                                    deep_thinking = s.reasoning_effort == "high";
                                     selection = s.context_selection.clone();
                                     println!("{}", gray("session loaded"));
                                 }
@@ -230,7 +230,7 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
         let result = chat::deepseek::stream_chat(
             &messages,
             &model,
-            deep_thinking,
+            if deep_thinking { "high" } else { "off" },
             chat::deepseek::StreamCallbacks {
                 on_token: |token, _first| {
                     print!("{token}");
@@ -334,7 +334,7 @@ pub async fn cmd_global(cli: &Cli) {
                 }
                 "thinking" => {
                     deep_thinking = !deep_thinking;
-                    println!("{} deep thinking: {deep_thinking}", gray("toggled"));
+                    println!("{} reasoning effort: {}", gray("toggled"), if deep_thinking { "high" } else { "off" });
                     continue;
                 }
                 "context" => {
@@ -360,7 +360,7 @@ pub async fn cmd_global(cli: &Cli) {
                     let mut session = chat::session::ChatSession::new("global", "");
                     session.messages = history.clone();
                     session.model = model.clone();
-                    session.deep_thinking = deep_thinking;
+                    session.reasoning_effort = if deep_thinking { "high".to_string() } else { "off".to_string() };
                     session.context_selection = selection.clone();
                     if let Err(e) = chat::session::save_session(&mut session, Some(&chat_dir)) {
                         eprintln!("error saving session: {e}");
@@ -386,7 +386,7 @@ pub async fn cmd_global(cli: &Cli) {
                                     let s = &sessions[idx];
                                     history = s.messages.clone();
                                     model = s.model.clone();
-                                    deep_thinking = s.deep_thinking;
+                                    deep_thinking = s.reasoning_effort == "high";
                                     selection = s.context_selection.clone();
                                     println!("{}", gray("session loaded"));
                                 }
@@ -456,7 +456,7 @@ pub async fn cmd_global(cli: &Cli) {
         let result = chat::deepseek::stream_chat(
             &messages,
             &model,
-            deep_thinking,
+            if deep_thinking { "high" } else { "off" },
             chat::deepseek::StreamCallbacks {
                 on_token: |token, _first| {
                     print!("{token}");

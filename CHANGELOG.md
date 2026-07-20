@@ -1,5 +1,42 @@
 # ArxivCat CHANGELOG
 
+## v0.9.0 - Chat 系统重构 & UI 组件化
+
+### v0.9.0 更新内容
+
+- **Side Chat / Global Chat 彻底解耦**：`chatModel`/`reasoningEffort` 拆分为 side/global 两份独立状态，互不联动
+- **`ChatSurface` 组件体系**：`ChatMessages`、`ChatControls`、`ToggleChips`、`ChatSessionBar` 全部抽取为共享组件，ChatPanel / GlobalChat 各缩减 60%+ 代码
+- **`Dialog` 通用浮窗组件**：Log 和 Global Chat 共用同一套浮窗（resize + drag + 进入/退出动画），Log 面板新增 Copy 按钮
+- **`Select` / `SegmentedControl` 自定义组件**：替代原生 `<select>` 和按钮组，统一 Catppuccin Mocha 主题，带 hover 过渡
+- **Reasoning Effort 5 档**：off / low / medium / high / max，梯度蓝色按钮，选中即锁定不可撤销
+- **Context 锁定（per-paper 持久化）**：发送后 context chip 自动锁定（不能取消），锁定字段写入 session JSON，重启后恢复
+- **Chat 会话自动标题**：首条回复后 + 每 5 轮自动 fork 对话调用 DeepSeek Flash 生成标题，支持手动 regenerate
+- **会话弹出选择器**：session 列表改为按钮弹出浮窗，紧凑美观
+- **滚动记忆（per-paper per-view）**：Body/Appendix/Note/Description/PDF 各自独立记忆滚动位置，含 textarea 编辑模式；PDF embed 常驻 `display:none` 避免切换重载
+- **左侧 Papers 面板可折叠**：Toolbar 新增 Papers 按钮收起/展开
+- **全局 Toast 通知**：统一弹出式绿色提示（带进度条），替代 Preview 内联 toast
+- **Tooltip 悬浮层**：论文列表 hover 显示完整标题 + arXiv ID
+- **`generate_title` 非流式 API**：新增 Rust 命令，关闭 thinking mode，`max_tokens=20`
+- **性能优化**：拖动 resize/move 边界限制在窗口 20px 内；ChatSessionBar 点击外部关闭
+- **版本号**：v0.9.0（从 v0.8.0 的功能性大版本）
+
+---
+
+## v0.8.0 - Rust/Tauri 2 完整重写
+
+### v0.8.0 更新内容
+
+- **语言迁移**：Python + Tkinter → Rust + Tauri 2（React 前端），性能与跨平台能力全面提升
+- **架构重写**：提取逻辑、workspace 管理、chat 系统全部用 Rust 重写，类型安全，并发原生
+- **会话管理系统**：新增 `useChatSessions` hook，side chat 和 global chat 共享同一套多会话 + CRUD + 自动保存
+- **暂存区（Draft）系统**：Note/Description 编辑内容自动暂存到 localStorage，重启后自动恢复，点 Save 才写盘
+- **内嵌 PDF 阅读器**：第五个标签页，WebView2 原生 PDF 渲染 + 外部打开回退
+- **性能优化（五层）**：`useShallow` 隔离 store 订阅、`React.memo` 阻止级联重渲染、`activeTab+setTimeout` 标签秒切、条件渲染减少 DOM 节点、Ripple 延迟到 rAF
+- **UI 增强**：水波纹点击效果、按钮颜色 transition 渐变、`¶` 换行标记、Log 面板折叠、全按钮 RippleBtn 组件
+- **版本号**：v0.8.0（历史 tag 从 Python v0.7.1 延续）
+
+---
+
 ## v0.7.1 - Chat Persistence & UI Polish
 
 ### v0.7.1 更新内容

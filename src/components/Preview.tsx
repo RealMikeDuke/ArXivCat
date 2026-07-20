@@ -44,9 +44,14 @@ const Preview = memo(function Preview() {
 
   const [editValue, setEditValue] = useState("");
   const [editing, setEditing] = useState(false);
-  const [toastMsg, setToastMsg] = useState("");
   const [activeTab, setActiveTab] = useState<ViewMode>(currentView);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const paperKeyRef = useRef("");
+  paperKeyRef.current = currentPaper?.arxiv_id ?? "";
+  const allScrolls = useRef<Record<string, Record<string, number>>>({});
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const allTextareaScrolls = useRef<Record<string, Record<string, number>>>({});
 
   const bodyContent = previewContent["body"] || "";
   const appendixContent = previewContent["appendix"] || "";
@@ -67,16 +72,26 @@ const Preview = memo(function Preview() {
     }
   }, [currentView]);
 
+  useEffect(() => {
+    const pk = paperKeyRef.current;
+    if (!editing || !pk) return;
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.scrollTop = allTextareaScrolls.current[pk]?.[currentView] ?? 0;
+      }
+    });
+  }, [editing, currentView]);
+
   const renderedBody = useMemo(() => renderMarkers(bodyContent), [bodyContent]);
   const renderedAppendix = useMemo(() => renderMarkers(appendixContent), [appendixContent]);
   const renderedNote = useMemo(() => renderMarkers(noteContent), [noteContent]);
   const renderedDesc = useMemo(() => renderMarkers(descContent), [descContent]);
-  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState(false);
+  const pdfUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (currentView !== "pdf" || !workspacePath || !currentPaper) return;
-    setPdfError(false);
+    if (currentView !== "pdf" || pdfUrl || pdfError || !workspacePath || !currentPaper) return;
     invoke<string>("read_pdf_base64", {
       workspacePath,
       folderName: currentPaper.folder_name,
@@ -84,20 +99,27 @@ const Preview = memo(function Preview() {
     }).then((b64) => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const blob = new Blob([bytes], { type: "application/pdf" });
-      setPdfUrl(URL.createObjectURL(blob));
-    }).catch(() => { setPdfUrl(""); setPdfError(true); });
-    return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); };
-  }, [currentView, workspacePath, currentPaper]);
+      const url = URL.createObjectURL(blob);
+      pdfUrlRef.current = url;
+      setPdfUrl(url);
+    }).catch(() => { setPdfError(true); });
+  }, [currentView, workspacePath, currentPaper, pdfUrl, pdfError]);
 
-  const showToast = useCallback((msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(""), 1800);
-  }, []);
+  useEffect(() => {
+    return () => {
+      if (pdfUrlRef.current) {
+        URL.revokeObjectURL(pdfUrlRef.current);
+        pdfUrlRef.current = null;
+      }
+      setPdfUrl(null);
+      setPdfError(false);
+    };
+  }, [workspacePath, currentPaper]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content);
-    showToast("Copied!");
-  }, [content, showToast]);
+    useStore.getState().showToast("Copied!");
+  }, [content]);
 
   const handleEdit = useCallback(() => {
     setEditValue(draftValue ?? content);
@@ -129,6 +151,19 @@ const Preview = memo(function Preview() {
 
   const tabClick = useCallback((tab: ViewMode) => {
     if (tab === currentView) return;
+    const key = paperKeyRef.current;
+    if (contentRef.current && key) {
+      if (!allScrolls.current[key]) {
+        allScrolls.current[key] = { body: 0, appendix: 0, note: 0, description: 0, pdf: 0 };
+      }
+      allScrolls.current[key][currentView] = contentRef.current.scrollTop;
+    }
+    if (editing && textareaRef.current && key) {
+      if (!allTextareaScrolls.current[key]) {
+        allTextareaScrolls.current[key] = { note: 0, description: 0 };
+      }
+      allTextareaScrolls.current[key][currentView] = textareaRef.current.scrollTop;
+    }
     setActiveTab(tab);
     setTimeout(() => {
       if (editing) {
@@ -140,18 +175,20 @@ const Preview = memo(function Preview() {
     }, 0);
   }, [editing, getDraftKey, saveDraft, editValue, switchView, currentView]);
 
+  useEffect(() => {
+    const pk = paperKeyRef.current;
+    if (!pk) return;
+    requestAnimationFrame(() => {
+      if (contentRef.current) {
+        contentRef.current.scrollTop = allScrolls.current[pk]?.[currentView] ?? 0;
+      }
+    });
+  }, [currentView, previewContent]);
+
   const wordCount = useMemo(() => content.split(/\s+/).filter(Boolean).length, [content]);
 
   return (
     <div className="relative flex h-full flex-col">
-      {toastMsg && (
-        <div className="fixed left-1/2 bottom-8 z-50 -translate-x-1/2 pointer-events-none overflow-hidden rounded bg-[#a6e3a1] shadow-lg animate-[toast-slideout_0.35s_cubic-bezier(0.4,0,1,1)_forwards_1.5s]">
-          <div className="px-4 py-2 text-sm text-[#1e1e2e]">{toastMsg}</div>
-          <div className="h-0.5 w-full bg-[#1e1e2e]/20">
-            <div className="h-full bg-[#1e1e2e]/60 animate-[toast-shrink_1.5s_linear_forwards]" />
-          </div>
-        </div>
-      )}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex gap-1">
           {TAB_OPTIONS.map((tab) => (
@@ -182,13 +219,13 @@ const Preview = memo(function Preview() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto rounded border border-[#313244] bg-[#11111b] p-3">
+      <div ref={contentRef} className="flex-1 overflow-auto rounded border border-[#313244] bg-[#11111b] p-3">
         {currentView === "body" && <PreView html={renderedBody} />}
         {currentView === "appendix" && <PreView html={renderedAppendix} />}
         {currentView === "note" && !editing && <PreView html={renderedNote} />}
         {currentView === "note" && editing && (
           <div className="flex h-full flex-col">
-            <textarea value={editValue} onChange={(e) => setEditValue(e.target.value)}
+            <textarea ref={textareaRef} value={editValue} onChange={(e) => setEditValue(e.target.value)}
               className="flex-1 resize-none bg-transparent font-mono text-sm text-[#cdd6f4] outline-none" spellCheck={false} />
             <div className="mt-2 flex gap-2">
               <RippleBtn onClick={commitSave} className="rounded bg-[#a6e3a1] px-3 py-1 text-xs text-[#1e1e2e]">Save</RippleBtn>
@@ -199,7 +236,7 @@ const Preview = memo(function Preview() {
         {currentView === "description" && !editing && <PreView html={renderedDesc} />}
         {currentView === "description" && editing && (
           <div className="flex h-full flex-col">
-            <textarea value={editValue} onChange={(e) => setEditValue(e.target.value)}
+            <textarea ref={textareaRef} value={editValue} onChange={(e) => setEditValue(e.target.value)}
               className="flex-1 resize-none bg-transparent font-mono text-sm text-[#cdd6f4] outline-none" spellCheck={false} />
             <div className="mt-2 flex gap-2">
               <RippleBtn onClick={commitSave} className="rounded bg-[#a6e3a1] px-3 py-1 text-xs text-[#1e1e2e]">Save</RippleBtn>
@@ -207,21 +244,23 @@ const Preview = memo(function Preview() {
             </div>
           </div>
         )}
-        {currentView === "pdf" && (
-          pdfUrl ? (
+        {currentView === "pdf" && pdfError && (
+          <div className="flex h-full flex-col items-center justify-center gap-3">
+            <span className="text-xs text-[#6c7086]">Built-in PDF viewer unavailable</span>
+            <RippleBtn onClick={() => invoke("open_paper_pdf", {
+              workspacePath, folderName: currentPaper?.folder_name, arxivId: currentPaper?.arxiv_id,
+            })} className="rounded bg-[#45475a] px-3 py-1.5 text-xs text-[#cdd6f4] hover:bg-[#585b70]">
+              Open Externally
+            </RippleBtn>
+          </div>
+        )}
+        {currentView === "pdf" && !pdfUrl && !pdfError && (
+          <div className="flex h-full items-center justify-center text-xs text-[#6c7086]">Loading PDF...</div>
+        )}
+        {pdfUrl && (
+          <div style={{ display: currentView === "pdf" ? "" : "none" }} className="h-full w-full">
             <embed src={pdfUrl} type="application/pdf" className="h-full w-full" onError={() => setPdfError(true)} />
-          ) : pdfError ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3">
-              <span className="text-xs text-[#6c7086]">Built-in PDF viewer unavailable</span>
-              <RippleBtn onClick={() => invoke("open_paper_pdf", {
-                workspacePath, folderName: currentPaper?.folder_name, arxivId: currentPaper?.arxiv_id,
-              })} className="rounded bg-[#45475a] px-3 py-1.5 text-xs text-[#cdd6f4] hover:bg-[#585b70]">
-                Open Externally
-              </RippleBtn>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-xs text-[#6c7086]">Loading PDF...</div>
-          )
+          </div>
         )}
       </div>
     </div>

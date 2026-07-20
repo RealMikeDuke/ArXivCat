@@ -149,7 +149,7 @@ pub async fn start_chat(
     cancel_state: tauri::State<'_, CancelState>,
     messages: Vec<serde_json::Value>,
     model: String,
-    deep_thinking: bool,
+    reasoning_effort: String,
     paper_context: Option<String>,
 ) -> Result<StreamChatResponse, String> {
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -168,11 +168,12 @@ pub async fn start_chat(
     }
 
     let sid = session_id.clone();
+    let effort = reasoning_effort.clone();
     tauri::async_runtime::spawn(async move {
         let result = chat::deepseek::stream_chat(
             &full_messages,
             &model,
-            deep_thinking,
+            &effort,
             chat::deepseek::StreamCallbacks {
                 on_token: |text, _is_first| {
                     let _ = app.emit("chat:token", serde_json::json!({
@@ -382,8 +383,11 @@ pub async fn get_chat_sessions(session_dir: String) -> Result<Vec<serde_json::Va
                 "title": s.title,
                 "kind": s.kind,
                 "model": s.model,
-                "deep_thinking": s.deep_thinking,
+                "reasoning_effort": s.reasoning_effort,
+                "locked_fields": s.locked_fields,
                 "messages": s.messages,
+                "context_selection": s.context_selection,
+                "context_snapshot": s.context_snapshot,
                 "view_name": s.view_name,
                 "updated_at": s.updated_at,
             })
@@ -405,7 +409,7 @@ pub async fn save_chat_session_data(
     let title = session_data["title"].as_str().unwrap_or("Chat");
     let kind = session_data["kind"].as_str().unwrap_or("paper");
     let model = session_data["model"].as_str().unwrap_or("Flash");
-    let deep_thinking = session_data["deep_thinking"].as_bool().unwrap_or(true);
+    let reasoning_effort = session_data["reasoning_effort"].as_str().unwrap_or("low").to_string();
 
     let messages: Vec<chat::session::ChatMessage> =
         serde_json::from_value(session_data["messages"].clone()).unwrap_or_default();
@@ -420,12 +424,17 @@ pub async fn save_chat_session_data(
         .to_string();
     let view_name = session_data["view_name"].as_str().unwrap_or("body").to_string();
 
+    let locked_fields: std::collections::HashMap<String, Vec<String>> = serde_json::from_value(
+        session_data.get("locked_fields").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+    ).unwrap_or_default();
+
     let mut session = chat::session::ChatSession {
         path,
         title: title.to_string(),
         kind: kind.to_string(),
         model: model.to_string(),
-        deep_thinking,
+        reasoning_effort,
+        locked_fields,
         messages,
         context_selection,
         context_snapshot,
@@ -448,6 +457,11 @@ pub async fn rename_chat_session_data(path: String, new_title: String) -> Result
 #[tauri::command]
 pub async fn delete_chat_session_data(path: String) -> Result<bool, String> {
     chat::session::delete_session(std::path::Path::new(&path)).map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn generate_chat_title(messages: Vec<serde_json::Value>) -> Result<String, String> {
+    chat::deepseek::generate_title(&messages).await.map_err(map_err)
 }
 
 #[tauri::command]

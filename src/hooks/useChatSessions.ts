@@ -1,14 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { ChatMessage } from "../store";
+import { ChatMessage, useStore } from "../store";
 
 export interface ChatSession {
   path: string;
   title: string;
   kind: string;
   model: string;
-  deep_thinking: boolean;
+  reasoning_effort: string;
+  locked_fields: Record<string, string[]>;
   messages: ChatMessage[];
   context_selection: Record<string, boolean>;
   context_snapshot: string;
@@ -16,7 +17,7 @@ export interface ChatSession {
   updated_at: string;
 }
 
-export function useChatSessions(sessionDir: string | null, model: string, deepThinking: boolean) {
+export function useChatSessions(sessionDir: string | null, model: string, reasoningEffort: string) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -27,6 +28,25 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
   const localRef = useRef(localBuffer);
   localRef.current = localBuffer;
   const savingRef = useRef(false);
+
+  const lockedFields: Record<string, string[]> = activeIdx >= 0 && activeIdx < sessions.length
+    ? sessions[activeIdx].locked_fields || {} : {};
+
+  const lockFields = useCallback((fields: Record<string, string[]>) => {
+    if (Object.keys(fields).length === 0) return;
+    setSessions((prev) => {
+      const idx = activeIdx >= 0 ? activeIdx : prev.length - 1;
+      if (idx < 0 || idx >= prev.length) return prev;
+      const existing = prev[idx].locked_fields || {};
+      const merged: Record<string, string[]> = {};
+      for (const key of new Set([...Object.keys(existing), ...Object.keys(fields)]) as Set<string>) {
+        merged[key] = [...new Set([...(existing[key] || []), ...(fields[key] || [])])];
+      }
+      const next = [...prev];
+      next[idx] = { ...next[idx], locked_fields: merged };
+      return next;
+    });
+  }, [activeIdx]);
 
   const loadSessionList = useCallback(async () => {
     if (!sessionDir) {
@@ -73,8 +93,9 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
           title: s.title,
           kind: s.kind,
           model,
-          deep_thinking: deepThinking,
+          reasoning_effort: reasoningEffort,
           messages: msgs,
+          locked_fields: s.locked_fields || {},
           context_selection: s.context_selection,
           context_snapshot: s.context_snapshot,
           view_name: s.view_name,
@@ -91,7 +112,7 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
       }
     } catch { /* silent */ }
     savingRef.current = false;
-  }, [activeIdx, sessionDir, sessions, model, deepThinking]);
+  }, [activeIdx, sessionDir, sessions, model, reasoningEffort]);
 
   const newSession = useCallback(async (kind: string) => {
     if (!sessionDir) return;
@@ -102,7 +123,8 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
       ...prev,
       {
         path: "", title, kind, model,
-        deep_thinking: deepThinking,
+        reasoning_effort: reasoningEffort,
+        locked_fields: {},
         messages: [],
         context_selection: {},
         context_snapshot: "",
@@ -112,7 +134,7 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
     ]);
     setActiveIdx(sessions.length);
     setMessages([]);
-  }, [sessionDir, model, deepThinking, sessions.length]);
+  }, [sessionDir, model, reasoningEffort, sessions.length]);
 
   const switchSession = useCallback(async (idx: number) => {
     if (idx === activeIdx) return;
@@ -195,11 +217,54 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
     return () => unlisteners.forEach((u) => u());
   }, [sessionId]);
 
-  // Auto-save after streaming completes
+  const generateTitle = useCallback(async (msgs: ChatMessage[], sessionIdx: number) => {
+    const { addLog, showToast } = useStore.getState();
+    addLog(`[title] called idx=${sessionIdx} msgs=${msgs.length} sessions=${sessions.length}`);
+    if (sessionIdx < 0 || sessionIdx >= sessions.length) { addLog(`[title] bail: idx ${sessionIdx} out of ${sessions.length}`); return; }
+    const apiMessages = msgs.map((m) => ({
+      role: m.speaker === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+    try {
+      const title = await invoke<string>("generate_chat_title", { messages: apiMessages });
+      addLog(`[title] API → "${title}"`);
+      showToast(`Title: ${title}`);
+      let path = "";
+      setSessions((prev) => {
+        const next = [...prev];
+        if (sessionIdx < next.length) {
+          next[sessionIdx] = { ...next[sessionIdx], title };
+          path = next[sessionIdx].path;
+        }
+        return next;
+      });
+      if (path) {
+        invoke("rename_chat_session_data", { path, newTitle: title }).catch(() => {});
+      }
+    } catch (e) {
+      addLog(`[title] error: ${e}`);
+    }
+  }, [sessions]);
+
+  // Auto-save after streaming completes + chain title generation
+  const titledLengths = useRef(new Set<number>());
+
   useEffect(() => {
     if (streaming || sessionId || savingRef.current || messages.length === 0) return;
-    saveCurrent(messages);
-  }, [streaming, sessionId]);
+    const n = messages.length;
+    const s = activeIdx >= 0 ? sessions[activeIdx] : null;
+    const shouldTitle = s && (s.title.startsWith("Chat ") || s.title.startsWith("Global Chat ")) &&
+      (n === 2 || (n > 2 && (n - 2) % 10 === 0)) && !titledLengths.current.has(n);
+
+    const doSave = async () => {
+      await saveCurrent(messages);
+      if (shouldTitle) {
+        titledLengths.current.add(n);
+        generateTitle(messages, activeIdx);
+      }
+    };
+    doSave();
+  }, [streaming, sessionId, messages.length, activeIdx, sessions, saveCurrent, generateTitle]);
 
   const sendMessage = useCallback(async (content: string, context: string) => {
     if (!content.trim() || streaming) return;
@@ -217,7 +282,7 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
       const { session_id } = await invoke<{ session_id: string }>("start_chat", {
         messages: apiMessages,
         model,
-        deepThinking,
+        reasoningEffort,
         paperContext: context || null,
       });
       setSessionId(session_id);
@@ -225,7 +290,7 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
       setStatus(`error: ${e}`);
       setStreaming(false);
     }
-  }, [messages, streaming, model, deepThinking]);
+  }, [messages, streaming, model, reasoningEffort]);
 
   const cancelChat = useCallback(async () => {
     if (sessionId) {
@@ -241,5 +306,6 @@ export function useChatSessions(sessionDir: string | null, model: string, deepTh
     sessions, activeIdx, messages, streaming, status, localBuffer,
     newSession, switchSession, renameSession, deleteSession,
     sendMessage, cancelChat,
+    lockedFields, lockFields, generateTitle,
   };
 }

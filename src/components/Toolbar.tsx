@@ -6,13 +6,15 @@ import RippleBtn from "./Ripple";
 import { useShallow } from "zustand/react/shallow";
 
 export default function Toolbar() {
-  const { workspacePath, currentPaper, sideChatOpen, globalChatOpen, toggleLog, download, openWorkspace, scanPdfs, downloadAll, downloadPaper, toggleSideChat, toggleGlobalChat } = useStore(
+  const { workspacePath, currentPaper, sideChatOpen, globalChatOpen, leftPanelOpen, toggleLog, toggleLeftPanel, download, openWorkspace, scanPdfs, downloadAll, downloadPaper, toggleSideChat, toggleGlobalChat } = useStore(
     useShallow((s) => ({
       workspacePath: s.workspacePath,
       currentPaper: s.currentPaper,
       sideChatOpen: s.sideChatOpen,
       globalChatOpen: s.globalChatOpen,
+      leftPanelOpen: s.leftPanelOpen,
       toggleLog: s.toggleLog,
+      toggleLeftPanel: s.toggleLeftPanel,
       download: s.download,
       openWorkspace: s.openWorkspace,
       scanPdfs: s.scanPdfs,
@@ -142,6 +144,16 @@ export default function Toolbar() {
               Download
             </RippleBtn>
           </div>
+          <RippleBtn
+            onClick={toggleLeftPanel}
+            className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
+              leftPanelOpen
+                ? "bg-[#89b4fa] text-[#1e1e2e]"
+                : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+            }`}
+          >
+            Papers
+          </RippleBtn>
           {currentPaper && (
             <RippleBtn
               onClick={toggleSideChat}

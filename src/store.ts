@@ -11,6 +11,7 @@ export interface Paper {
 }
 
 export type ViewMode = "body" | "appendix" | "note" | "description" | "pdf";
+export type ReasoningEffort = "off" | "low" | "medium" | "high" | "max";
 
 export interface ChatMessage {
   speaker: string;
@@ -25,10 +26,18 @@ export interface ContextSelection {
 }
 
 export const DEFAULT_SIDE_SELECTION: ContextSelection = {
-  body: true,
+  body: false,
   appendix: false,
   description: false,
   note: false,
+};
+
+export const EFFORT_BUTTON_CLASS: Record<string, string> = {
+  off: "bg-[#313244] text-[#6c7086] hover:bg-[#45475a]",
+  low: "bg-[#3a3b52] text-[#8a9bb8] hover:bg-[#45475a]",
+  medium: "bg-[#45537b] text-[#aabee0] hover:bg-[#586b99]",
+  high: "bg-[#5a7bb5] text-[#eef4ff] hover:bg-[#6b8fcc]",
+  max: "bg-[#89b4fa] text-[#1e1e2e] font-medium hover:bg-[#9ec5ff]",
 };
 
 export const DEFAULT_GLOBAL_SELECTION: ContextSelection = {
@@ -60,10 +69,14 @@ interface StoreState {
   sideChatOpen: boolean;
   globalChatOpen: boolean;
   chatMessages: ChatMessage[];
-  chatModel: string;
-  deepThinking: boolean;
+  sideChatModel: string;
+  globalChatModel: string;
+  sideReasoningEffort: ReasoningEffort;
+  globalReasoningEffort: ReasoningEffort;
   logMessages: string[];
   logOpen: boolean;
+  toastMessage: string | null;
+  leftPanelOpen: boolean;
   drafts: Record<string, string>;
 
   sideContextSelection: ContextSelection;
@@ -87,18 +100,18 @@ interface StoreState {
   toggleGlobalChat: () => void;
   addLog: (msg: string) => void;
   toggleLog: () => void;
-  setChatModel: (model: string) => void;
-  toggleDeepThinking: () => void;
-  addChatMessage: (msg: ChatMessage) => void;
-  clearChat: () => void;
+  showToast: (msg: string) => void;
+  toggleLeftPanel: () => void;
+  setSideChatModel: (model: string) => void;
+  setGlobalChatModel: (model: string) => void;
+  setSideReasoningEffort: (effort: ReasoningEffort) => void;
+  setGlobalReasoningEffort: (effort: ReasoningEffort) => void;
 
   getDraftKey: () => string | null;
   saveDraft: (key: string, content: string) => void;
   clearDraft: (key: string) => void;
   setSideSelection: (sel: ContextSelection) => void;
   setGlobalSelection: (folderName: string, sel: ContextSelection) => void;
-  sendChat: (messages: ChatMessage[], context: string) => Promise<void>;
-  cancelChat: () => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -110,10 +123,14 @@ export const useStore = create<StoreState>((set, get) => ({
   sideChatOpen: false,
   globalChatOpen: false,
   chatMessages: [],
-  chatModel: "Flash",
-  deepThinking: true,
+  sideChatModel: "Flash",
+  globalChatModel: "Flash",
+  sideReasoningEffort: "low",
+  globalReasoningEffort: "low",
   logMessages: [],
   logOpen: false,
+  toastMessage: null,
+  leftPanelOpen: true,
   drafts: (() => {
     try {
       const d: Record<string, string> = {};
@@ -174,7 +191,6 @@ export const useStore = create<StoreState>((set, get) => ({
         currentPaper: paper,
         previewContent: content,
         currentView: "body",
-        sideChatOpen: true,
       });
     } catch (e) {
       get().addLog(`[ERROR] Failed to load paper: ${e}`);
@@ -286,14 +302,13 @@ export const useStore = create<StoreState>((set, get) => ({
       logMessages: [...s.logMessages.slice(-99), msg],
     })),
   toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
+  showToast: (msg) => { set({ toastMessage: msg }); setTimeout(() => set({ toastMessage: null }), 1900); },
+  toggleLeftPanel: () => set((s) => ({ leftPanelOpen: !s.leftPanelOpen })),
 
-  setChatModel: (model: string) => set({ chatModel: model }),
-  toggleDeepThinking: () => set((s) => ({ deepThinking: !s.deepThinking })),
-
-  addChatMessage: (msg: ChatMessage) =>
-    set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
-
-  clearChat: () => set({ chatMessages: [], chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] } }),
+  setSideChatModel: (model: string) => set({ sideChatModel: model }),
+  setGlobalChatModel: (model: string) => set({ globalChatModel: model }),
+  setSideReasoningEffort: (effort) => set({ sideReasoningEffort: effort }),
+  setGlobalReasoningEffort: (effort) => set({ globalReasoningEffort: effort }),
 
   getDraftKey: () => {
     const { currentPaper, currentView } = get();
@@ -322,39 +337,4 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({
       globalContextSelection: { ...s.globalContextSelection, [folderName]: sel },
     })),
-
-  sendChat: async (messages: ChatMessage[], context: string) => {
-    const { chatModel, deepThinking } = get();
-    const apiMessages = messages.map((m) => ({
-      role: m.speaker === "user" ? "user" : "assistant",
-      content: m.content,
-    }));
-
-    try {
-      const { session_id } = await invoke<{ session_id: string }>("start_chat", {
-        messages: apiMessages,
-        model: chatModel,
-        deepThinking,
-        paperContext: context || null,
-      });
-
-      set({
-        chat: { sessionId: session_id, streaming: true, status: "thinking...", bufferTokens: [] },
-      });
-
-      // events are handled by event listeners set up in components
-      // the first token event will clear "thinking..." status
-    } catch (e) {
-      set({ chat: { sessionId: null, streaming: false, status: "", bufferTokens: [] } });
-      get().addLog(`[ERROR] Chat failed: ${e}`);
-    }
-  },
-
-  cancelChat: () => {
-    const { chat } = get();
-    if (chat.sessionId) {
-      invoke("cancel_chat", { sessionId: chat.sessionId }).catch(() => {});
-      set({ chat: { sessionId: null, streaming: false, status: "cancelled", bufferTokens: [] } });
-    }
-  },
 }));

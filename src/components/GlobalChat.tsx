@@ -1,23 +1,31 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useStore, DEFAULT_GLOBAL_SELECTION } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatSessions } from "../hooks/useChatSessions";
 import ChatSessionBar from "./ChatSessionBar";
 import { useShallow } from "zustand/react/shallow";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import RippleBtn from "./Ripple";
+import ChatControls from "./ChatControls";
+import ToggleChips from "./ToggleChips";
+import ChatMessages from "./ChatMessages";
+import Dialog from "./Dialog";
+
+const ALL_FIELDS = ["body", "appendix", "description", "note"] as const;
+const EMPTY_SELECTION = { body: false, appendix: false, description: false, note: false };
 
 export default function GlobalChat() {
-  const { chatModel, toggleGlobalChat, papers, workspacePath, globalContextSelection, setGlobalSelection } = useStore(
+  const { globalChatOpen, globalChatModel, globalReasoningEffort, toggleGlobalChat, papers, workspacePath, globalContextSelection, setGlobalSelection, setGlobalChatModel, setGlobalReasoningEffort } = useStore(
     useShallow((s) => ({
-      chatModel: s.chatModel,
+      globalChatOpen: s.globalChatOpen,
+      globalChatModel: s.globalChatModel,
+      globalReasoningEffort: s.globalReasoningEffort,
       toggleGlobalChat: s.toggleGlobalChat,
       papers: s.papers,
       workspacePath: s.workspacePath,
       globalContextSelection: s.globalContextSelection,
       setGlobalSelection: s.setGlobalSelection,
+      setGlobalChatModel: s.setGlobalChatModel,
+      setGlobalReasoningEffort: s.setGlobalReasoningEffort,
     }))
   );
 
@@ -26,18 +34,46 @@ export default function GlobalChat() {
   const {
     sessions, activeIdx, messages, streaming, status, localBuffer,
     newSession, switchSession, renameSession, deleteSession,
-    sendMessage, cancelChat,
-  } = useChatSessions(sessionDir, chatModel, true);
+    sendMessage, cancelChat, generateTitle,
+    lockedFields, lockFields,
+  } = useChatSessions(sessionDir, globalChatModel, globalReasoningEffort);
 
   const [input, setInput] = useState("");
   const [paperContents, setPaperContents] = useState<Record<string, Record<string, string>>>({});
-  const [showConfig, setShowConfig] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [showCtx, setShowCtx] = useState(true);
 
+  const restoredSessionKey = useRef<string | null>(null);
+
+  // Restore context & locked fields when switching to an existing session
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, localBuffer]);
+    if (activeIdx < 0 || !sessions[activeIdx] || papers.length === 0) return;
+    const session = sessions[activeIdx];
+    const key = `${activeIdx}:${session.path}`;
+    if (restoredSessionKey.current === key) return;
+    restoredSessionKey.current = key;
 
+    // Restore context_selection: apply flat session selection to ALL papers
+    const flatSel = session.context_selection;
+    for (const p of papers) {
+      setGlobalSelection(p.folder_name, {
+        body: flatSel.body ?? false,
+        appendix: flatSel.appendix ?? false,
+        description: flatSel.description ?? false,
+        note: flatSel.note ?? false,
+      });
+    }
+  }, [activeIdx, sessions, papers]);
+
+  // Initialize context for papers that don't have an entry yet (e.g. newly added papers)
+  useEffect(() => {
+    for (const p of papers) {
+      if (!globalContextSelection[p.folder_name]) {
+        setGlobalSelection(p.folder_name, { ...EMPTY_SELECTION });
+      }
+    }
+  }, [papers]);
+
+  // Load paper contents
   useEffect(() => {
     const loadAll = async () => {
       const contents: Record<string, Record<string, string>> = {};
@@ -52,15 +88,8 @@ export default function GlobalChat() {
         } catch {}
       }
       setPaperContents(contents);
-      for (const p of papers) {
-        if (!globalContextSelection[p.folder_name]) {
-          setGlobalSelection(p.folder_name, { ...DEFAULT_GLOBAL_SELECTION });
-        }
-      }
     };
-    if (workspacePath && papers.length > 0) {
-      loadAll();
-    }
+    if (workspacePath && papers.length > 0) loadAll();
   }, [papers, workspacePath]);
 
   const buildGlobalContext = useCallback((): string => {
@@ -75,157 +104,130 @@ export default function GlobalChat() {
       if (sel.description && content["description"]) sections.push(`description:\n${content["description"]}`);
       if (sel.note && content["note"]) sections.push(`note:\n${content["note"]}`);
       if (sections.length === 0) continue;
-      parts.push(
-        `Paper [${papers.indexOf(p) + 1}]\narXiv ID: ${p.arxiv_id}\nTitle: ${p.title}\n---\n${sections.join("\n\n")}`
-      );
+      parts.push(`Paper [${papers.indexOf(p) + 1}]\narXiv ID: ${p.arxiv_id}\nTitle: ${p.title}\n---\n${sections.join("\n\n")}`);
     }
     return parts.join("\n\n---\n\n");
   }, [papers, globalContextSelection, paperContents]);
 
+  const resetContext = useCallback(() => {
+    for (const p of papers) setGlobalSelection(p.folder_name, { ...EMPTY_SELECTION });
+  }, [papers]);
+
   const handleSend = useCallback(async () => {
     if (!input.trim() || streaming) return;
+    if (activeIdx < 0) { resetContext(); newSession("global"); }
     const msg = input;
     setInput("");
-    setShowConfig(false);
-    const context = buildGlobalContext();
-    await sendMessage(msg, context);
-  }, [input, streaming, buildGlobalContext, sendMessage]);
+    const next: Record<string, string[]> = {};
+    for (const p of papers) {
+      const sel = globalContextSelection[p.folder_name] || DEFAULT_GLOBAL_SELECTION;
+      const active = ALL_FIELDS.filter((k) => sel[k]);
+      if (active.length > 0) next[p.folder_name] = active;
+    }
+    lockFields(next);
+    await sendMessage(msg, buildGlobalContext());
+  }, [input, streaming, buildGlobalContext, sendMessage, papers, globalContextSelection, activeIdx, newSession, resetContext, lockFields]);
+
+  const handleNew = useCallback(() => {
+    resetContext();
+    newSession("global");
+  }, [resetContext, newSession]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex h-[80vh] w-[700px] max-w-[95vw] flex-col rounded-lg border border-[#45475a] bg-[#1e1e2e] shadow-2xl">
-        <div className="flex items-center gap-2 border-b border-[#313244] px-4 py-3">
-          <span className="font-semibold text-[#cdd6f4]">Global Chat</span>
-          <span className="text-xs text-[#6c7086]">{papers.length} papers</span>
-          <div className="flex-1" />
-          <RippleBtn
-            onClick={() => setShowConfig(!showConfig)}
-            className="rounded bg-[#313244] px-2 py-0.5 text-xs text-[#a6adc8] hover:text-[#cdd6f4]"
-          >
-            {showConfig ? "Hide Config" : "Configure Context"}
-          </RippleBtn>
-          <RippleBtn
-            onClick={toggleGlobalChat}
-            className="rounded bg-[#313244] px-3 py-1 text-xs text-[#a6adc8] hover:text-[#cdd6f4]"
-          >
-            Close
-          </RippleBtn>
-        </div>
-
-        <ChatSessionBar
-          sessions={sessions}
-          activeIdx={activeIdx}
-          onNew={() => newSession("global")}
-          onSwitch={switchSession}
-          onRename={renameSession}
-          onDelete={deleteSession}
-          kind="global"
-        />
-
-        {showConfig && (
-          <div className="max-h-[40%] overflow-y-auto border-b border-[#313244] px-4 py-2">
-            <div className="mb-2 text-xs font-semibold text-[#a6adc8]">
-              Per-paper context selection (default: description only)
-            </div>
-            <div className="mb-2 flex gap-3 text-xs text-[#6c7086]">
-              <span>Body</span>
-              <span>Appendix</span>
-              <span>Description</span>
-              <span>Note</span>
-            </div>
-            {papers.map((p) => {
-              const sel = globalContextSelection[p.folder_name] || { ...DEFAULT_GLOBAL_SELECTION };
-              return (
-                <div key={p.folder_name} className="mb-1 flex items-center gap-2 text-xs">
-                  <span className="w-28 truncate text-[#89b4fa]" title={`${p.arxiv_id} | ${p.title}`}>
-                    {p.arxiv_id}
-                  </span>
-                  {(["body", "appendix", "description", "note"] as const).map((field) => (
-                    <label key={field} className="flex items-center gap-1 text-[#a6adc8] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={sel[field]}
-                        onChange={() => {
-                          setGlobalSelection(p.folder_name, {
-                            ...sel,
-                            [field]: !sel[field],
-                          });
-                        }}
-                        className="accent-[#89b4fa]"
-                      />
-                    </label>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto p-4">
-          {messages.map((m, i) => (
-            <div key={i} className={`mb-3 ${m.speaker === "user" ? "text-right" : ""}`}>
-              <div
-                className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                  m.speaker === "user"
-                    ? "bg-[#89b4fa] text-[#1e1e2e]"
-                    : "bg-[#313244] text-[#cdd6f4]"
-                }`}
-              >
-                {m.speaker === "user" ? (
-                  <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
-                ) : (
-                  <div className="prose prose-sm prose-invert max-w-none [&_.katex-display]:my-2 [&_.katex]:text-inherit [&_p]:leading-relaxed [&_code]:bg-[#45475a] [&_code]:rounded [&_code]:px-1 [&_pre]:bg-[#11111b] [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_a]:text-[#89b4fa]">
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {m.content}
-                    </ReactMarkdown>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {streaming && localBuffer && (
-            <div className="mb-3">
-              <div className="inline-block max-w-[85%] rounded-lg bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4]">
-                <pre className="whitespace-pre-wrap font-sans">{localBuffer}</pre>
-              </div>
-            </div>
+    <Dialog open={globalChatOpen} onClose={toggleGlobalChat}
+      title={<><span>Global Chat</span><span className="text-xs text-[#6c7086] ml-2">{papers.length} papers</span></>}
+      defaultWidth={700} defaultHeight={600}
+      headerExtra={
+        <>
+          {activeIdx >= 0 && sessions[activeIdx] && (
+            <span className="max-w-32 truncate text-xs text-[#a6adc8]" title={sessions[activeIdx].title}>{sessions[activeIdx].title}</span>
           )}
-          <div ref={bottomRef} />
-        </div>
-
-        {status && (
-          <div className="px-4 py-1 text-xs text-[#f9e2af]">{status}</div>
-        )}
-
-        <div className="border-t border-[#313244] p-3">
-          <div className="flex gap-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-              placeholder="Ask about all papers..."
-              disabled={streaming}
-              className="flex-1 rounded bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4] outline-none"
-            />
-            {streaming ? (
-              <RippleBtn
-                onClick={cancelChat}
-                className="rounded bg-[#f38ba8] px-4 py-2 text-sm text-[#1e1e2e]"
-              >
-                Stop
-              </RippleBtn>
-            ) : (
-              <RippleBtn
-                onClick={handleSend}
-                disabled={streaming || !input.trim()}
-                className="rounded bg-[#89b4fa] px-4 py-2 text-sm text-[#1e1e2e] disabled:opacity-50"
-              >
-                Send
-              </RippleBtn>
-            )}
+          <ChatSessionBar
+            sessions={sessions}
+            activeIdx={activeIdx}
+            onNew={handleNew}
+            onSwitch={switchSession}
+            onRename={renameSession}
+            onDelete={deleteSession}
+            onRegenTitle={(i) => generateTitle(sessions[i]?.messages ?? messages, i)}
+            kind="global"
+            compact
+          />
+          <ChatControls
+            model={globalChatModel}
+            effort={globalReasoningEffort}
+            onModelChange={setGlobalChatModel}
+            onEffortChange={(e) => setGlobalReasoningEffort(e as typeof globalReasoningEffort)}
+          />
+          <RippleBtn onClick={() => setShowCtx(!showCtx)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              showCtx ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+            }`}>
+            Ctx
+          </RippleBtn>
+        </>
+      }>
+      {showCtx && (
+        <div className="max-h-[40%] overflow-y-auto border-b border-[#313244] px-4 py-2">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#a6adc8]">
+            Context
+            <div className="flex gap-1 ml-auto">
+                {ALL_FIELDS.map((field) => {
+                  const allOn = papers.every((p) => {
+                    const sel = globalContextSelection[p.folder_name] || DEFAULT_GLOBAL_SELECTION;
+                    return sel[field];
+                  });
+                  const allLocked = papers.length > 0 && papers.every((p) => (lockedFields[p.folder_name] || []).includes(field));
+                  return (
+                    <button key={field} onClick={() => {
+                      if (allLocked) return;
+                      for (const p of papers) {
+                        setGlobalSelection(p.folder_name, { ...(globalContextSelection[p.folder_name] || DEFAULT_GLOBAL_SELECTION), [field]: !allOn });
+                      }
+                    }}
+                      className={`rounded px-2 py-0.5 text-xs transition-colors ${allLocked ? "bg-[#89b4fa] text-[#1e1e2e] opacity-70 cursor-default" : allOn ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8]"}`}>
+                      All {field.charAt(0).toUpperCase() + field.slice(1)}
+                    </button>
+                  );
+                })}
+            </div>
           </div>
+          {papers.map((p) => {
+            const sel = globalContextSelection[p.folder_name] || { ...DEFAULT_GLOBAL_SELECTION };
+            const paperLocked = lockedFields[p.folder_name] || [];
+            return (
+              <div key={p.folder_name} className="mb-1.5 flex items-center gap-2 text-xs">
+                <span className="w-28 truncate text-[#89b4fa]" title={`${p.arxiv_id} | ${p.title}`}>{p.arxiv_id}</span>
+                <ToggleChips
+                  options={[
+                    { key: "body", label: "Body" },
+                    { key: "appendix", label: "Appendix" },
+                    { key: "description", label: "Description" },
+                    { key: "note", label: "Note" },
+                  ]}
+                  selection={{ ...sel, ...Object.fromEntries(paperLocked.map((k) => [k, true])) }}
+                  locked={paperLocked}
+                    onChange={(key) => { if (!paperLocked.includes(key)) setGlobalSelection(p.folder_name, { ...sel, [key]: !sel[key] }); }}
+                />
+              </div>
+            );
+          })}
         </div>
-      </div>
-    </div>
+      )}
+
+      <ChatMessages
+        messages={messages}
+        streaming={streaming}
+        status={status}
+        localBuffer={localBuffer}
+        input={input}
+        onInputChange={setInput}
+        onSend={handleSend}
+        onCancel={cancelChat}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+        placeholder="Ask about all papers..."
+        emptyLabel="Ask questions about all papers in the workspace"
+      />
+    </Dialog>
   );
 }

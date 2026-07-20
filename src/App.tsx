@@ -1,21 +1,45 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Toolbar from "./components/Toolbar";
 import PaperList from "./components/PaperList";
 import Preview from "./components/Preview";
 import ChatPanel from "./components/ChatPanel";
 import GlobalChat from "./components/GlobalChat";
+import Toast from "./components/Toast";
+import Dialog from "./components/Dialog";
 import RippleBtn from "./components/Ripple";
 import { useStore } from "./store";
 import { useShallow } from "zustand/react/shallow";
 
+function LogCopyButton({ messages }: { messages: string[] }) {
+  const showToast = useStore((s) => s.showToast);
+  return (
+    <RippleBtn onClick={() => {
+      navigator.clipboard.writeText(messages.join("\n")).then(() => showToast("Copied!")).catch(() => {});
+    }} className="rounded bg-[#313244] px-3 py-1 text-xs text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4] transition-colors">
+      Copy
+    </RippleBtn>
+  );
+}
+
+function LogViewer({ messages }: { messages: string[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" }); }, [messages]);
+  return (
+    <div ref={ref} className="flex-1 overflow-y-auto p-4 font-mono text-xs leading-6 text-[#a6adc8]">
+      {messages.length === 0 && <span className="text-[#6c7086]">(empty)</span>}
+      {messages.map((msg, i) => <div key={i}>{msg}</div>)}
+    </div>
+  );
+}
+
 export default function App() {
-  const { workspacePath, papers, currentPaper, sideChatOpen, globalChatOpen, logMessages, logOpen, toggleLog, initWorkspace } = useStore(
+  const { workspacePath, papers, currentPaper, sideChatOpen, leftPanelOpen, logMessages, logOpen, toggleLog, initWorkspace } = useStore(
     useShallow((s) => ({
       workspacePath: s.workspacePath,
       papers: s.papers,
       currentPaper: s.currentPaper,
       sideChatOpen: s.sideChatOpen,
-      globalChatOpen: s.globalChatOpen,
+      leftPanelOpen: s.leftPanelOpen,
       logMessages: s.logMessages,
       logOpen: s.logOpen,
       toggleLog: s.toggleLog,
@@ -37,7 +61,7 @@ export default function App() {
         const w = Math.max(180, Math.min(500, e.clientX));
         setLeftWidth(w);
       } else if (dragging === "right") {
-        const w = Math.max(250, Math.min(600, window.innerWidth - e.clientX));
+        const w = Math.max(250, Math.min(window.innerWidth * 0.6, window.innerWidth - e.clientX));
         setRightWidth(w);
       }
     },
@@ -75,14 +99,17 @@ export default function App() {
         <Toolbar />
       </div>
       <div className="flex flex-1 overflow-hidden">
-        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto border-r border-[#313244]">
-          <PaperList />
-        </div>
-
-        <div
-          className="w-1 cursor-col-resize bg-[#313244] hover:bg-[#89b4fa] active:bg-[#89b4fa]"
-          onMouseDown={() => setDragging("left")}
-        />
+        {leftPanelOpen && (
+          <>
+            <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto border-r border-[#313244]">
+              <PaperList />
+            </div>
+            <div
+              className="w-1 cursor-col-resize bg-[#313244] hover:bg-[#89b4fa] active:bg-[#89b4fa]"
+              onMouseDown={() => setDragging("left")}
+            />
+          </>
+        )}
 
         <div className="flex-1 overflow-y-auto p-4">
           {currentPaper ? (
@@ -113,21 +140,12 @@ export default function App() {
           </>
         )}
       </div>
-      {globalChatOpen && <GlobalChat />}
+      <GlobalChat />
 
-      {logOpen && (
-        <div className="border-t border-[#313244] bg-[#11111b]">
-          <div className="flex items-center justify-between px-3 py-1">
-            <span className="text-xs font-semibold text-[#a6adc8]">Log</span>
-            <RippleBtn onClick={toggleLog} className="text-xs text-[#6c7086] hover:text-[#cdd6f4]">Close</RippleBtn>
-          </div>
-          <div className="max-h-20 overflow-y-auto px-3 pb-1">
-            {logMessages.map((msg, i) => (
-              <div key={i} className="font-mono text-xs leading-5 text-[#a6adc8]">{msg}</div>
-            ))}
-          </div>
-        </div>
-      )}
+      <Toast />
+      <Dialog open={logOpen} onClose={toggleLog} title="Log" headerExtra={<LogCopyButton messages={logMessages} />}>
+        <LogViewer messages={logMessages} />
+      </Dialog>
     </div>
   );
 }

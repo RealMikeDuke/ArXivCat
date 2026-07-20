@@ -35,7 +35,7 @@ where
 pub async fn stream_chat<F1, F2, F3>(
     messages: &[serde_json::Value],
     model: &str,
-    deep_thinking: bool,
+    reasoning_effort: &str,
     callbacks: StreamCallbacks<F1, F2, F3>,
     cancel_flag: &std::sync::atomic::AtomicBool,
 ) -> Result<()>
@@ -56,11 +56,9 @@ where
         "stream": true,
     });
 
-    if deep_thinking {
-        body["reasoning_effort"] = serde_json::Value::String("high".to_string());
-        body["extra_body"] = serde_json::json!({
-            "thinking": {"type": "enabled"}
-        });
+    if reasoning_effort != "off" {
+        body["thinking"] = serde_json::json!({"type": "enabled"});
+        body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
     }
 
     let client = reqwest::Client::new();
@@ -165,4 +163,55 @@ where
     }
 
     Ok(())
+}
+
+pub async fn generate_title(messages: &[serde_json::Value]) -> Result<String> {
+    let api_key = config::load_cached_token().ok_or_else(|| {
+        ArxivError::Config("no DeepSeek API key configured".into())
+    })?;
+
+    let mut body = serde_json::json!({
+        "model": "deepseek-v4-flash",
+        "messages": messages,
+        "max_tokens": 20,
+        "stream": false,
+        "thinking": {"type": "disabled"},
+    });
+
+    body["messages"].as_array_mut().unwrap().push(serde_json::json!({
+        "role": "user",
+        "content": "Generate a short title for this conversation in the same language as the conversation. Output only the title."
+    }));
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.deepseek.com/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ArxivError::Chat(format!("title API request failed: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(ArxivError::Chat(format!("title API error {status}: {text}")));
+    }
+
+    let json: serde_json::Value = response.json().await.map_err(|e| {
+        ArxivError::Chat(format!("failed to parse title response: {e}"))
+    })?;
+
+    let title = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if title.is_empty() {
+        return Err(ArxivError::Chat("empty title response".into()));
+    }
+
+    Ok(title)
 }

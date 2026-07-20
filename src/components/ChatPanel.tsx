@@ -1,24 +1,24 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useStore, ContextSelection } from "../store";
+import { useState, useCallback, useEffect } from "react";
+import { useStore } from "../store";
 import { useChatSessions } from "../hooks/useChatSessions";
 import ChatSessionBar from "./ChatSessionBar";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import { useShallow } from "zustand/react/shallow";
 import RippleBtn from "./Ripple";
+import ChatControls from "./ChatControls";
+import ToggleChips from "./ToggleChips";
+import ChatMessages from "./ChatMessages";
 
 export default function ChatPanel() {
-  const { workspacePath, currentPaper, chatModel, deepThinking, sideContextSelection, previewContent, setChatModel, toggleDeepThinking, setSideSelection } = useStore(
+  const { workspacePath, currentPaper, sideChatModel, sideReasoningEffort, sideContextSelection, previewContent, setSideChatModel, setSideReasoningEffort, setSideSelection } = useStore(
     useShallow((s) => ({
       workspacePath: s.workspacePath,
       currentPaper: s.currentPaper,
-      chatModel: s.chatModel,
-      deepThinking: s.deepThinking,
+      sideChatModel: s.sideChatModel,
+      sideReasoningEffort: s.sideReasoningEffort,
       sideContextSelection: s.sideContextSelection,
       previewContent: s.previewContent,
-      setChatModel: s.setChatModel,
-      toggleDeepThinking: s.toggleDeepThinking,
+      setSideChatModel: s.setSideChatModel,
+      setSideReasoningEffort: s.setSideReasoningEffort,
       setSideSelection: s.setSideSelection,
     }))
   );
@@ -30,170 +30,103 @@ export default function ChatPanel() {
   const {
     sessions, activeIdx, messages, streaming, status, localBuffer,
     newSession, switchSession, renameSession, deleteSession,
-    sendMessage, cancelChat,
-  } = useChatSessions(sessionDir, chatModel, deepThinking);
+    sendMessage, cancelChat, lockedFields, lockFields, generateTitle,
+  } = useChatSessions(sessionDir, sideChatModel, sideReasoningEffort);
+
+  const folderName = currentPaper?.folder_name || "";
+  const paperLockedFields = lockedFields[folderName] || [];
 
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [showCtx, setShowCtx] = useState(true);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, localBuffer]);
+    if (activeIdx >= 0 && sessions[activeIdx]?.context_selection) {
+      const sel = sessions[activeIdx].context_selection;
+      setSideSelection({ body: !!sel.body, appendix: !!sel.appendix, description: !!sel.description, note: !!sel.note });
+    }
+  }, [activeIdx, sessions]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || streaming) return;
+    if (activeIdx < 0) newSession("paper");
     const msg = input;
     setInput("");
-    const context = buildContextString(previewContent, sideContextSelection);
-    await sendMessage(msg, context);
-  }, [input, streaming, previewContent, sideContextSelection, sendMessage]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+    const parts: string[] = [];
+    if (sideContextSelection.body && previewContent["body"]) parts.push(`body:\n${previewContent["body"]}`);
+    if (sideContextSelection.appendix && previewContent["appendix"]) parts.push(`appendix:\n${previewContent["appendix"]}`);
+    if (sideContextSelection.description && previewContent["description"]) parts.push(`description:\n${previewContent["description"]}`);
+    if (sideContextSelection.note && previewContent["note"]) parts.push(`note:\n${previewContent["note"]}`);
+    const activeFields = (["body", "appendix", "description", "note"] as const).filter(
+      (k) => sideContextSelection[k]
+    );
+    if (activeFields.length > 0 && folderName) {
+      lockFields({ [folderName]: activeFields });
     }
-  };
-
-  const toggleContextField = (field: keyof ContextSelection) => {
-    setSideSelection({
-      ...sideContextSelection,
-      [field]: !sideContextSelection[field],
-    });
-  };
+    await sendMessage(msg, parts.join("\n\n"));
+  }, [input, streaming, previewContent, sideContextSelection, sendMessage, lockFields, activeIdx, newSession, folderName]);
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-[#313244] px-3 py-2">
-        <span className="text-xs font-semibold text-[#a6adc8]">Side Chat</span>
+        <span className="text-xs font-semibold text-[#a6adc8] whitespace-nowrap">Side Chat</span>
+        {activeIdx >= 0 && sessions[activeIdx] && (
+          <span className="max-w-24 truncate text-xs text-[#cdd6f4]" title={sessions[activeIdx].title}>{sessions[activeIdx].title}</span>
+        )}
+        <ChatSessionBar
+          sessions={sessions}
+          activeIdx={activeIdx}
+          onNew={() => newSession("paper")}
+          onSwitch={switchSession}
+          onRename={renameSession}
+          onDelete={deleteSession}
+          onRegenTitle={(i) => generateTitle(sessions[i]?.messages ?? messages, i)}
+          kind="paper"
+          compact
+        />
         <div className="flex-1" />
-        <select
-          value={chatModel}
-          onChange={(e) => setChatModel(e.target.value)}
-          className="rounded bg-[#313244] px-2 py-0.5 text-xs text-[#cdd6f4] outline-none"
-        >
-          <option value="Flash">Flash</option>
-          <option value="Pro">Pro</option>
-        </select>
-        <RippleBtn
-          onClick={toggleDeepThinking}
-          className={`rounded px-2 py-0.5 text-xs transition-colors duration-150 ${
-            deepThinking
-              ? "bg-[#89b4fa] text-[#1e1e2e]"
-              : "bg-[#313244] text-[#a6adc8]"
-          }`}
-        >
-          Deep
+        <ChatControls
+          model={sideChatModel}
+          effort={sideReasoningEffort}
+          onModelChange={setSideChatModel}
+          onEffortChange={(e) => setSideReasoningEffort(e as typeof sideReasoningEffort)}
+        />
+        <RippleBtn onClick={() => setShowCtx(!showCtx)}
+          className={`rounded px-2 py-0.5 text-xs transition-colors ${
+            showCtx ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+          }`}>
+          Ctx
         </RippleBtn>
       </div>
 
-      <ChatSessionBar
-        sessions={sessions}
-        activeIdx={activeIdx}
-        onNew={() => newSession("paper")}
-        onSwitch={switchSession}
-        onRename={renameSession}
-        onDelete={deleteSession}
-        kind="paper"
-      />
-
-      <div className="flex gap-2 border-b border-[#313244] px-3 py-1.5">
-        {(["body", "appendix", "description", "note"] as const).map((field) => (
-          <label key={field} className="flex items-center gap-1 text-xs text-[#a6adc8] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={sideContextSelection[field]}
-              onChange={() => toggleContextField(field)}
-              className="accent-[#89b4fa]"
-            />
-            {field.charAt(0).toUpperCase() + field.slice(1)}
-          </label>
-        ))}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-3">
-        {messages.length === 0 && !streaming && (
-          <div className="py-8 text-center text-xs text-[#6c7086]">
-            Ask questions about this paper
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={`mb-3 ${m.speaker === "user" ? "text-right" : ""}`}>
-            <div
-              className={`inline-block max-w-[90%] rounded-lg px-3 py-2 text-sm ${
-                m.speaker === "user"
-                  ? "bg-[#89b4fa] text-[#1e1e2e]"
-                  : "bg-[#313244] text-[#cdd6f4]"
-              }`}
-            >
-              {m.speaker === "user" ? (
-                <pre className="whitespace-pre-wrap font-sans">{m.content}</pre>
-              ) : (
-                <div className="prose prose-sm prose-invert max-w-none [&_.katex-display]:my-2 [&_.katex]:text-inherit [&_p]:leading-relaxed [&_code]:bg-[#45475a] [&_code]:rounded [&_code]:px-1 [&_pre]:bg-[#11111b] [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_a]:text-[#89b4fa]">
-                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {m.content}
-                  </ReactMarkdown>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-        {streaming && localBuffer && (
-          <div className="mb-3">
-            <div className="inline-block max-w-[90%] rounded-lg bg-[#313244] px-3 py-2 text-sm text-[#cdd6f4]">
-              <pre className="whitespace-pre-wrap font-sans">{localBuffer}</pre>
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {status && (
-        <div className="px-3 py-1 text-xs text-[#f9e2af]">{status}</div>
+      {showCtx && (
+        <div className="border-b border-[#313244] px-3 py-1.5">
+          <ToggleChips
+            options={[
+              { key: "body", label: "Body" },
+              { key: "appendix", label: "Appendix" },
+              { key: "description", label: "Description" },
+              { key: "note", label: "Note" },
+            ]}
+            selection={{ ...sideContextSelection, ...Object.fromEntries(paperLockedFields.map((k) => [k, true])) }}
+            locked={paperLockedFields}
+            onChange={(key) => { if (!paperLockedFields.includes(key)) setSideSelection({ ...sideContextSelection, [key]: !sideContextSelection[key] }); }}
+          />
+        </div>
       )}
 
-      <div className="border-t border-[#313244] p-2">
-        <div className="flex gap-2">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about this paper..."
-            disabled={streaming}
-            className="flex-1 rounded bg-[#313244] px-3 py-1.5 text-sm text-[#cdd6f4] outline-none disabled:opacity-50"
-          />
-          {streaming ? (
-            <RippleBtn
-              onClick={cancelChat}
-              className="rounded bg-[#f38ba8] px-4 py-1.5 text-sm text-[#1e1e2e]"
-            >
-              Stop
-            </RippleBtn>
-          ) : (
-            <RippleBtn
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="rounded bg-[#89b4fa] px-4 py-1.5 text-sm text-[#1e1e2e] disabled:opacity-50"
-            >
-              Send
-            </RippleBtn>
-          )}
-        </div>
-      </div>
+      <ChatMessages
+        messages={messages}
+        streaming={streaming}
+        status={status}
+        localBuffer={localBuffer}
+        input={input}
+        onInputChange={setInput}
+        onSend={handleSend}
+        onCancel={cancelChat}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+        placeholder="Ask about this paper..."
+        emptyLabel="Ask questions about this paper"
+      />
     </div>
   );
-}
-
-function buildContextString(
-  content: Record<string, string>,
-  sel: ContextSelection
-): string {
-  const parts: string[] = [];
-  if (sel.body && content["body"]) parts.push(`body:\n${content["body"]}`);
-  if (sel.appendix && content["appendix"])
-    parts.push(`appendix:\n${content["appendix"]}`);
-  if (sel.description && content["description"])
-    parts.push(`description:\n${content["description"]}`);
-  if (sel.note && content["note"]) parts.push(`note:\n${content["note"]}`);
-  return parts.join("\n\n");
 }
