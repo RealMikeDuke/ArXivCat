@@ -40,10 +40,28 @@ export const EFFORT_BUTTON_CLASS: Record<string, string> = {
   max: "bg-[#89b4fa] text-[#1e1e2e] font-medium hover:bg-[#9ec5ff]",
 };
 
+export type ToastType = "success" | "info" | "error" | "warning";
+
+export const TOAST: Record<ToastType, { bg: string; bar: string }> = {
+  success: { bg: "bg-[#a6e3a1]", bar: "bg-[#1e1e2e]/60" },
+  info: { bg: "bg-[#89b4fa]", bar: "bg-[#1e1e2e]/60" },
+  error: { bg: "bg-[#f38ba8]", bar: "bg-[#1e1e2e]/60" },
+  warning: { bg: "bg-[#f9e2af]", bar: "bg-[#1e1e2e]/60" },
+};
+
+export const BTN = {
+  surface0: "bg-[#313244] hover:bg-[#45475a] text-[#a6adc8] hover:text-[#cdd6f4]",
+  surface1: "bg-[#45475a] hover:bg-[#585b70] text-[#cdd6f4]",
+  blue: "bg-[#89b4fa] hover:bg-[#b4d0fb] text-[#1e1e2e]",
+  green: "bg-[#a6e3a1] hover:bg-[#b8ebc0] text-[#1e1e2e]",
+  red: "bg-[#f38ba8] hover:bg-[#f5a0b9] text-[#1e1e2e]",
+  ghost: "hover:bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]",
+} as const;
+
 export const DEFAULT_GLOBAL_SELECTION: ContextSelection = {
   body: false,
   appendix: false,
-  description: true,
+  description: false,
   note: false,
 };
 
@@ -76,6 +94,7 @@ interface StoreState {
   logMessages: string[];
   logOpen: boolean;
   toastMessage: string | null;
+  toastType: ToastType;
   leftPanelOpen: boolean;
   drafts: Record<string, string>;
 
@@ -100,7 +119,7 @@ interface StoreState {
   toggleGlobalChat: () => void;
   addLog: (msg: string) => void;
   toggleLog: () => void;
-  showToast: (msg: string) => void;
+  showToast: (msg: string, type?: ToastType) => void;
   toggleLeftPanel: () => void;
   setSideChatModel: (model: string) => void;
   setGlobalChatModel: (model: string) => void;
@@ -130,6 +149,7 @@ export const useStore = create<StoreState>((set, get) => ({
   logMessages: [],
   logOpen: false,
   toastMessage: null,
+  toastType: "success",
   leftPanelOpen: true,
   drafts: (() => {
     try {
@@ -302,7 +322,7 @@ export const useStore = create<StoreState>((set, get) => ({
       logMessages: [...s.logMessages.slice(-99), msg],
     })),
   toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
-  showToast: (msg) => { set({ toastMessage: msg }); setTimeout(() => set({ toastMessage: null }), 1900); },
+  showToast: (msg, type = "success") => { set({ toastMessage: msg, toastType: type }); setTimeout(() => set({ toastMessage: null }), 1400); },
   toggleLeftPanel: () => set((s) => ({ leftPanelOpen: !s.leftPanelOpen })),
 
   setSideChatModel: (model: string) => set({ sideChatModel: model }),
@@ -319,7 +339,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   saveDraft: (key: string, content: string) => {
     set((s) => ({ drafts: { ...s.drafts, [key]: content } }));
-    try { localStorage.setItem(`ac_draft_${key}`, content); } catch {}
+    try { localStorage.setItem(`ac_draft_${key}`, content); } catch (e) { get().addLog(`[ERROR] Failed to save draft to localStorage: ${e}`); }
   },
 
   clearDraft: (key: string) => {
@@ -328,7 +348,7 @@ export const useStore = create<StoreState>((set, get) => ({
       delete next[key];
       return { drafts: next };
     });
-    try { localStorage.removeItem(`ac_draft_${key}`); } catch {}
+    try { localStorage.removeItem(`ac_draft_${key}`); } catch (e) { get().addLog(`[ERROR] Failed to clear draft from localStorage: ${e}`); }
   },
 
   setSideSelection: (sel: ContextSelection) => set({ sideContextSelection: sel }),

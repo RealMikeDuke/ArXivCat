@@ -2,6 +2,8 @@
 
 This document is for future maintainers and contributors. It explains the full architecture, key design decisions, and code paths of the ArXivCat project.
 
+**参见：[conventions.md](./conventions.md)** — 预设（BTN/TOAST）、组件约定、命名规则。
+
 ---
 
 ## 1. Project Overview
@@ -653,10 +655,77 @@ Custom thin scrollbar in `index.css`:
 *::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
 ```
 
-### 10.3 Icons
+### 10.3 Component Presets
 
-Generated from `src-tauri/icons/icon.png` using `npx tauri icon`. The icon was
-created programmatically (512x512 "AC" text on dark background).
+Button and toast colors use preset constants in `src/store.ts` for consistency.
+Always use these instead of inline color classes.
+
+#### Button Presets (`BTN`)
+
+```ts
+BTN.surface0   // bg-[#313244] hover:bg-[#45475a]    — inactive/secondary buttons
+BTN.surface1   // bg-[#45475a] hover:bg-[#585b70]    — default toolbar buttons
+BTN.blue       // bg-[#89b4fa] hover:bg-[#b4d0fb]    — accent/active buttons
+BTN.green      // bg-[#a6e3a1] hover:bg-[#b8ebc0]    — save/confirm buttons
+BTN.red        // bg-[#f38ba8] hover:bg-[#f5a0b9]    — stop/cancel buttons
+BTN.ghost      // hover:bg-[#313244]                  — icon-only buttons
+```
+
+Usage:
+```tsx
+<RippleBtn className={`rounded px-3 py-1.5 text-sm ${BTN.surface1}`}>Click</RippleBtn>
+```
+
+For toggle buttons that change color by state, use the preset for each branch:
+```tsx
+className={`rounded px-2 py-0.5 text-xs ${
+  active ? BTN.blue : BTN.surface0
+}`}
+```
+
+#### Toast Presets (`TOAST`)
+
+```ts
+TOAST.success  // green  — default
+TOAST.info     // blue
+TOAST.error    // red
+TOAST.warning  // yellow
+```
+
+Usage:
+```ts
+showToast("Saved!")               // green (default)
+showToast("Failed", "error")      // red
+```
+
+### 10.4 Icons
+
+### 10.5 Dialog (Floating Window)
+
+`src/components/Dialog.tsx` is a reusable floating window used by Global Chat and Log.
+It supports drag (via title bar), resize (via bottom-right handle), and enter/exit animation.
+
+**Props:**
+| Prop | Default | Description |
+|---|---|---|
+| `open` | — | Visibility toggle |
+| `onClose` | — | Close handler |
+| `title` | — | Title content (ReactNode) |
+| `children` | — | Body content (fills remaining space) |
+| `headerExtra` | — | Extra buttons/controls in title bar |
+| `defaultWidth` | 600 | Initial width |
+| `defaultHeight` | 400 | Initial height |
+| `minWidth` | 400 | Minimum resize width |
+| `minHeight` | 300 | Minimum resize height |
+
+**Animation:**
+- Enter: `alive → double rAF → visible → scale(0.95→1) + opacity(0→1)` over 0.15s
+- Exit: `visible=false → setTimeout(alive=false, 150ms)` over 0.15s
+
+**Performance:**
+Resize and drag manipulate DOM directly via `dialogRef` (not React state) during
+the operation, and sync final values to state on mouseup. Transition is disabled
+during drag/resize to avoid lag. See `Dialog.tsx:67-108`.
 
 ---
 

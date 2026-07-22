@@ -200,7 +200,7 @@ pub async fn process_pending_paper(
     if paper.has_body && !paper.description_ready {
         ensure_paper_meta_files(&out_dir)?;
         let _ = crate::chat::description::build_description(
-            &out_dir, arxiv_id, &paper.title, None,
+            &out_dir, arxiv_id, &paper.title, None, None,
         )
         .await;
         return Ok(has_complete_description(&out_dir));
@@ -229,7 +229,7 @@ pub async fn process_pending_paper(
     ensure_paper_meta_files(&out_dir)?;
 
     let _ = crate::chat::description::build_description(
-        &out_dir, arxiv_id, &paper.title, None,
+        &out_dir, arxiv_id, &paper.title, None, None,
     )
     .await;
 

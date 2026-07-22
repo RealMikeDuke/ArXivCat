@@ -10,28 +10,32 @@ pub async fn build_description(
     arxiv_id: &str,
     title: &str,
     log_cb: Option<&(dyn Fn(&str) + Sync)>,
+    context_override: Option<&str>,
 ) -> Result<()> {
     let api_key = config::load_cached_token().ok_or_else(|| {
         ArxivError::Config("no DeepSeek API key configured".into())
     })?;
 
-    let body_path = paper_dir.join("body.tex");
-    let appendix_path = paper_dir.join("appendix.tex");
     let desc_path = paper_dir.join("description.md");
     let flag_path = paper_dir.join(".description_ready");
 
-    let mut context = String::new();
-
-    if body_path.exists() {
-        let body = std::fs::read_to_string(&body_path)?;
-        context.push_str(&body);
-    }
-
-    if appendix_path.exists() {
-        let appendix = std::fs::read_to_string(&appendix_path)?;
-        context.push_str("\n\n[Appendix]\n");
-        context.push_str(&appendix);
-    }
+    let context = if let Some(override_text) = context_override {
+        override_text.to_string()
+    } else {
+        let body_path = paper_dir.join("body.tex");
+        let appendix_path = paper_dir.join("appendix.tex");
+        let mut ctx = String::new();
+        if body_path.exists() {
+            let body = std::fs::read_to_string(&body_path)?;
+            ctx.push_str(&body);
+        }
+        if appendix_path.exists() {
+            let appendix = std::fs::read_to_string(&appendix_path)?;
+            ctx.push_str("\n\n[Appendix]\n");
+            ctx.push_str(&appendix);
+        }
+        ctx
+    };
 
     if context.trim().is_empty() {
         return Err(ArxivError::Extraction("paper text is empty".into()));

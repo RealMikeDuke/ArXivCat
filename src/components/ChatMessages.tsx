@@ -2,7 +2,7 @@ import { useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { ChatMessage } from "../store";
+import { ChatMessage, BTN } from "../store";
 import RippleBtn from "./Ripple";
 
 interface ChatMessagesProps {
@@ -82,12 +82,12 @@ export default function ChatMessages({
             className="flex-1 rounded bg-[#313244] px-3 py-1.5 text-sm text-[#cdd6f4] outline-none disabled:opacity-50"
           />
           {streaming ? (
-            <RippleBtn onClick={onCancel} className="rounded bg-[#f38ba8] px-4 py-1.5 text-sm text-[#1e1e2e]">
+            <RippleBtn onClick={onCancel} className={`rounded px-4 py-1.5 text-sm ${BTN.red}`}>
               Stop
             </RippleBtn>
           ) : (
             <RippleBtn onClick={onSend} disabled={!input.trim()}
-              className="rounded bg-[#89b4fa] px-4 py-1.5 text-sm text-[#1e1e2e] disabled:opacity-50">
+              className={`rounded px-4 py-1.5 text-sm disabled:opacity-50 ${BTN.blue}`}>
               Send
             </RippleBtn>
           )}

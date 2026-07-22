@@ -15,16 +15,20 @@ pub struct ChatContext {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ContextSelection {
+    #[serde(default)]
     pub body: bool,
+    #[serde(default)]
     pub appendix: bool,
+    #[serde(default)]
     pub description: bool,
+    #[serde(default)]
     pub note: bool,
 }
 
 impl Default for ContextSelection {
     fn default() -> Self {
         Self {
-            body: true,
+            body: false,
             appendix: false,
             description: false,
             note: false,

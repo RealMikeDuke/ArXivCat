@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
+import { BTN } from "../store";
 import { ChatSession } from "../hooks/useChatSessions";
 import RippleBtn from "./Ripple";
+import Dropdown from "./Dropdown";
 
 interface Props {
   sessions: ChatSession[];
@@ -18,27 +20,10 @@ export default function ChatSessionBar({ sessions, activeIdx, onNew, onSwitch, o
   const [open, setOpen] = useState(false);
   const [renamingIdx, setRenamingIdx] = useState(-1);
   const [renameValue, setRenameValue] = useState("");
-  const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node) &&
-          btnRef.current && !btnRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    if (open) document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
 
   const handleOpen = useCallback(() => {
-    if (btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setPos({ top: rect.bottom + 4, left: Math.max(8, Math.min(rect.left, window.innerWidth - 264)) });
-    }
-    setOpen(true);
+    setOpen((v) => !v);
   }, []);
 
   const startRename = (idx: number, cur: string) => { setRenamingIdx(idx); setRenameValue(cur); };
@@ -48,7 +33,7 @@ export default function ChatSessionBar({ sessions, activeIdx, onNew, onSwitch, o
     <div className="flex flex-col">
       <div className="flex items-center justify-between border-b border-[#313244] px-3 py-1.5">
         <span className="text-xs font-semibold text-[#a6adc8]">{kind === "global" ? "Global Sessions" : "Sessions"}</span>
-        <RippleBtn onClick={onNew} className="rounded bg-[#89b4fa] px-2 py-0.5 text-xs text-[#1e1e2e] hover:bg-[#b4d0fb]">+ New</RippleBtn>
+        <RippleBtn onClick={onNew} className={`rounded px-2 py-0.5 text-xs ${BTN.blue}`}>+ New</RippleBtn>
       </div>
       <div className="max-h-44 overflow-y-auto">
         {sessions.length === 0 && <div className="px-3 py-3 text-xs text-[#6c7086]">No sessions yet</div>}
@@ -84,7 +69,7 @@ export default function ChatSessionBar({ sessions, activeIdx, onNew, onSwitch, o
       <>
         <span ref={btnRef}>
           <RippleBtn onClick={handleOpen}
-            className="flex items-center gap-1.5 rounded bg-[#313244] px-2 py-0.5 text-xs text-[#a6adc8] hover:text-[#cdd6f4] transition-colors">
+            className="flex items-center gap-1.5 rounded bg-[#313244] px-2 py-0.5 text-xs text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4] transition-colors">
             <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect x="2" y="3" width="12" height="10" rx="1" />
               <line x1="2" y1="7" x2="14" y2="7" />
@@ -93,12 +78,11 @@ export default function ChatSessionBar({ sessions, activeIdx, onNew, onSwitch, o
             {sessions.length}
           </RippleBtn>
         </span>
-        {open && (
-          <div ref={panelRef} style={{ top: pos.top, left: pos.left }}
-            className="fixed z-[9999] w-64 overflow-hidden rounded border border-[#45475a] bg-[#1e1e2e] shadow-xl">
+        <Dropdown open={open} onClose={() => setOpen(false)} anchorRef={btnRef} width={264}>
+          <div className="w-64 overflow-hidden rounded-lg">
             {sessionList}
           </div>
-        )}
+        </Dropdown>
       </>
     );
   }

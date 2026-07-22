@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
-import { useStore } from "../store";
+import { useStore, DEFAULT_SIDE_SELECTION, BTN } from "../store";
 import { useChatSessions } from "../hooks/useChatSessions";
+import { useContextRestore } from "../hooks/useContextRestore";
 import ChatSessionBar from "./ChatSessionBar";
 import { useShallow } from "zustand/react/shallow";
 import RippleBtn from "./Ripple";
+import ChatTitleBar from "./ChatTitleBar";
 import ChatControls from "./ChatControls";
 import ToggleChips from "./ToggleChips";
 import ChatMessages from "./ChatMessages";
@@ -39,12 +41,16 @@ export default function ChatPanel() {
   const [input, setInput] = useState("");
   const [showCtx, setShowCtx] = useState(true);
 
-  useEffect(() => {
-    if (activeIdx >= 0 && sessions[activeIdx]?.context_selection) {
-      const sel = sessions[activeIdx].context_selection;
+  useContextRestore(activeIdx, sessions, "side", (session) => {
+    if (session.context_selection) {
+      const sel = session.context_selection;
       setSideSelection({ body: !!sel.body, appendix: !!sel.appendix, description: !!sel.description, note: !!sel.note });
     }
-  }, [activeIdx, sessions]);
+  });
+
+  useEffect(() => {
+    setSideSelection({ ...DEFAULT_SIDE_SELECTION });
+  }, [sessionDir]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || streaming) return;
@@ -69,9 +75,6 @@ export default function ChatPanel() {
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-[#313244] px-3 py-2">
         <span className="text-xs font-semibold text-[#a6adc8] whitespace-nowrap">Side Chat</span>
-        {activeIdx >= 0 && sessions[activeIdx] && (
-          <span className="max-w-24 truncate text-xs text-[#cdd6f4]" title={sessions[activeIdx].title}>{sessions[activeIdx].title}</span>
-        )}
         <ChatSessionBar
           sessions={sessions}
           activeIdx={activeIdx}
@@ -91,8 +94,8 @@ export default function ChatPanel() {
           onEffortChange={(e) => setSideReasoningEffort(e as typeof sideReasoningEffort)}
         />
         <RippleBtn onClick={() => setShowCtx(!showCtx)}
-          className={`rounded px-2 py-0.5 text-xs transition-colors ${
-            showCtx ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+          className={`rounded px-2 py-0.5 text-xs ${
+            showCtx ? BTN.blue : BTN.surface0
           }`}>
           Ctx
         </RippleBtn>
@@ -112,6 +115,10 @@ export default function ChatPanel() {
             onChange={(key) => { if (!paperLockedFields.includes(key)) setSideSelection({ ...sideContextSelection, [key]: !sideContextSelection[key] }); }}
           />
         </div>
+      )}
+
+      {activeIdx >= 0 && sessions[activeIdx] && (
+        <ChatTitleBar title={sessions[activeIdx].title} />
       )}
 
       <ChatMessages

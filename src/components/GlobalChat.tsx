@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useStore, DEFAULT_GLOBAL_SELECTION } from "../store";
+import { useState, useEffect, useCallback } from "react";
+import { useStore, DEFAULT_GLOBAL_SELECTION, BTN } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { useChatSessions } from "../hooks/useChatSessions";
+import { useContextRestore } from "../hooks/useContextRestore";
 import ChatSessionBar from "./ChatSessionBar";
+import ChatTitleBar from "./ChatTitleBar";
+import ContextSelector from "./ContextSelector";
 import { useShallow } from "zustand/react/shallow";
 import RippleBtn from "./Ripple";
 import ChatControls from "./ChatControls";
-import ToggleChips from "./ToggleChips";
 import ChatMessages from "./ChatMessages";
 import Dialog from "./Dialog";
 
@@ -42,17 +44,8 @@ export default function GlobalChat() {
   const [paperContents, setPaperContents] = useState<Record<string, Record<string, string>>>({});
   const [showCtx, setShowCtx] = useState(true);
 
-  const restoredSessionKey = useRef<string | null>(null);
-
-  // Restore context & locked fields when switching to an existing session
-  useEffect(() => {
-    if (activeIdx < 0 || !sessions[activeIdx] || papers.length === 0) return;
-    const session = sessions[activeIdx];
-    const key = `${activeIdx}:${session.path}`;
-    if (restoredSessionKey.current === key) return;
-    restoredSessionKey.current = key;
-
-    // Restore context_selection: apply flat session selection to ALL papers
+  useContextRestore(activeIdx, sessions, "global", (session) => {
+    if (!session.context_selection || papers.length === 0) return;
     const flatSel = session.context_selection;
     for (const p of papers) {
       setGlobalSelection(p.folder_name, {
@@ -62,7 +55,7 @@ export default function GlobalChat() {
         note: flatSel.note ?? false,
       });
     }
-  }, [activeIdx, sessions, papers]);
+  }, [papers]);
 
   // Initialize context for papers that don't have an entry yet (e.g. newly added papers)
   useEffect(() => {
@@ -85,7 +78,9 @@ export default function GlobalChat() {
             folderName: p.folder_name,
           });
           contents[p.folder_name] = c;
-        } catch {}
+        } catch (e) {
+          useStore.getState().addLog(`[ERROR] Failed to load paper content: ${e}`);
+        }
       }
       setPaperContents(contents);
     };
@@ -139,9 +134,6 @@ export default function GlobalChat() {
       defaultWidth={700} defaultHeight={600}
       headerExtra={
         <>
-          {activeIdx >= 0 && sessions[activeIdx] && (
-            <span className="max-w-32 truncate text-xs text-[#a6adc8]" title={sessions[activeIdx].title}>{sessions[activeIdx].title}</span>
-          )}
           <ChatSessionBar
             sessions={sessions}
             activeIdx={activeIdx}
@@ -160,59 +152,24 @@ export default function GlobalChat() {
             onEffortChange={(e) => setGlobalReasoningEffort(e as typeof globalReasoningEffort)}
           />
           <RippleBtn onClick={() => setShowCtx(!showCtx)}
-            className={`rounded px-2 py-0.5 text-xs transition-colors ${
-              showCtx ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+            className={`rounded px-2 py-0.5 text-xs ${
+              showCtx ? BTN.blue : BTN.surface0
             }`}>
             Ctx
           </RippleBtn>
         </>
       }>
       {showCtx && (
-        <div className="max-h-[40%] overflow-y-auto border-b border-[#313244] px-4 py-2">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#a6adc8]">
-            Context
-            <div className="flex gap-1 ml-auto">
-                {ALL_FIELDS.map((field) => {
-                  const allOn = papers.every((p) => {
-                    const sel = globalContextSelection[p.folder_name] || DEFAULT_GLOBAL_SELECTION;
-                    return sel[field];
-                  });
-                  const allLocked = papers.length > 0 && papers.every((p) => (lockedFields[p.folder_name] || []).includes(field));
-                  return (
-                    <button key={field} onClick={() => {
-                      if (allLocked) return;
-                      for (const p of papers) {
-                        setGlobalSelection(p.folder_name, { ...(globalContextSelection[p.folder_name] || DEFAULT_GLOBAL_SELECTION), [field]: !allOn });
-                      }
-                    }}
-                      className={`rounded px-2 py-0.5 text-xs transition-colors ${allLocked ? "bg-[#89b4fa] text-[#1e1e2e] opacity-70 cursor-default" : allOn ? "bg-[#89b4fa] text-[#1e1e2e]" : "bg-[#313244] text-[#a6adc8]"}`}>
-                      All {field.charAt(0).toUpperCase() + field.slice(1)}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-          {papers.map((p) => {
-            const sel = globalContextSelection[p.folder_name] || { ...DEFAULT_GLOBAL_SELECTION };
-            const paperLocked = lockedFields[p.folder_name] || [];
-            return (
-              <div key={p.folder_name} className="mb-1.5 flex items-center gap-2 text-xs">
-                <span className="w-28 truncate text-[#89b4fa]" title={`${p.arxiv_id} | ${p.title}`}>{p.arxiv_id}</span>
-                <ToggleChips
-                  options={[
-                    { key: "body", label: "Body" },
-                    { key: "appendix", label: "Appendix" },
-                    { key: "description", label: "Description" },
-                    { key: "note", label: "Note" },
-                  ]}
-                  selection={{ ...sel, ...Object.fromEntries(paperLocked.map((k) => [k, true])) }}
-                  locked={paperLocked}
-                    onChange={(key) => { if (!paperLocked.includes(key)) setGlobalSelection(p.folder_name, { ...sel, [key]: !sel[key] }); }}
-                />
-              </div>
-            );
-          })}
-        </div>
+        <ContextSelector
+          papers={papers}
+          selection={globalContextSelection}
+          lockedFields={lockedFields}
+          onChange={(folder, sel) => setGlobalSelection(folder, sel)}
+        />
+      )}
+
+      {activeIdx >= 0 && sessions[activeIdx] && (
+        <ChatTitleBar title={sessions[activeIdx].title} />
       )}
 
       <ChatMessages

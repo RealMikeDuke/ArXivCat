@@ -323,12 +323,14 @@ pub async fn build_description(
     paper_dir: String,
     arxiv_id: String,
     title: String,
+    context: Option<String>,
 ) -> Result<(), String> {
     chat::description::build_description(
         std::path::Path::new(&paper_dir),
         &arxiv_id,
         &title,
         None,
+        context.as_deref(),
     )
     .await
     .map_err(map_err)
@@ -541,7 +543,7 @@ pub async fn download_paper(
 
     let _ = arxivcat_core::extract::source::download_pdf(&arxiv_id, &out_dir).await;
 
-    let _ = chat::description::build_description(&out_dir, &arxiv_id, &title, None).await;
+    let _ = chat::description::build_description(&out_dir, &arxiv_id, &title, None, None).await;
 
     let has_body = out_dir.join("body.tex").exists();
     let desc_ready = out_dir.join("description.md").exists()

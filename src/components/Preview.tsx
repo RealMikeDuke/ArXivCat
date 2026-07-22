@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, memo } from "react";
-import { useStore, ViewMode } from "../store";
+import { useStore, ViewMode, BTN } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import RippleBtn from "./Ripple";
 
@@ -102,7 +102,7 @@ const Preview = memo(function Preview() {
       const url = URL.createObjectURL(blob);
       pdfUrlRef.current = url;
       setPdfUrl(url);
-    }).catch(() => { setPdfError(true); });
+    }).catch((e: any) => { useStore.getState().addLog(`[ERROR] Failed to read PDF: ${e}`); setPdfError(true); });
   }, [currentView, workspacePath, currentPaper, pdfUrl, pdfError]);
 
   useEffect(() => {
@@ -197,8 +197,8 @@ const Preview = memo(function Preview() {
               onClick={() => tabClick(tab.key)}
               className={`rounded px-3 py-1 text-xs transition-colors duration-150 ${
                 activeTab === tab.key
-                  ? "bg-[#89b4fa] text-[#1e1e2e]"
-                  : "bg-[#313244] text-[#a6adc8] hover:text-[#cdd6f4]"
+                  ? BTN.blue
+                  : BTN.surface0
               }`}
             >
               {tab.label}
@@ -208,11 +208,11 @@ const Preview = memo(function Preview() {
         <div className="flex-1" />
         <div className="flex items-center gap-1">
           <span className="text-xs text-[#6c7086]">{content.length} chars · {wordCount} words</span>
-          <RippleBtn onClick={handleCopy} className="rounded bg-[#313244] px-2 py-1 text-xs text-[#a6adc8] hover:text-[#cdd6f4]">
+          <RippleBtn onClick={handleCopy} className={`rounded px-2 py-1 text-xs ${BTN.surface0}`}>
             Copy
           </RippleBtn>
           {isEditable && !editing && (
-            <RippleBtn onClick={handleEdit} className="rounded bg-[#313244] px-2 py-1 text-xs text-[#a6adc8] hover:text-[#cdd6f4]">
+            <RippleBtn onClick={handleEdit} className={`rounded px-2 py-1 text-xs ${BTN.surface0}`}>
               Edit
             </RippleBtn>
           )}
@@ -228,8 +228,8 @@ const Preview = memo(function Preview() {
             <textarea ref={textareaRef} value={editValue} onChange={(e) => setEditValue(e.target.value)}
               className="flex-1 resize-none bg-transparent font-mono text-sm text-[#cdd6f4] outline-none" spellCheck={false} />
             <div className="mt-2 flex gap-2">
-              <RippleBtn onClick={commitSave} className="rounded bg-[#a6e3a1] px-3 py-1 text-xs text-[#1e1e2e]">Save</RippleBtn>
-              <RippleBtn onClick={handleCancel} className="rounded bg-[#45475a] px-3 py-1 text-xs text-[#cdd6f4]">Cancel</RippleBtn>
+              <RippleBtn onClick={commitSave} className={`rounded px-3 py-1 text-xs ${BTN.green}`}>Save</RippleBtn>
+              <RippleBtn onClick={handleCancel} className={`rounded px-3 py-1 text-xs ${BTN.surface1}`}>Cancel</RippleBtn>
             </div>
           </div>
         )}
@@ -239,8 +239,8 @@ const Preview = memo(function Preview() {
             <textarea ref={textareaRef} value={editValue} onChange={(e) => setEditValue(e.target.value)}
               className="flex-1 resize-none bg-transparent font-mono text-sm text-[#cdd6f4] outline-none" spellCheck={false} />
             <div className="mt-2 flex gap-2">
-              <RippleBtn onClick={commitSave} className="rounded bg-[#a6e3a1] px-3 py-1 text-xs text-[#1e1e2e]">Save</RippleBtn>
-              <RippleBtn onClick={handleCancel} className="rounded bg-[#45475a] px-3 py-1 text-xs text-[#cdd6f4]">Cancel</RippleBtn>
+              <RippleBtn onClick={commitSave} className={`rounded px-3 py-1 text-xs ${BTN.green}`}>Save</RippleBtn>
+              <RippleBtn onClick={handleCancel} className={`rounded px-3 py-1 text-xs ${BTN.surface1}`}>Cancel</RippleBtn>
             </div>
           </div>
         )}
@@ -249,7 +249,7 @@ const Preview = memo(function Preview() {
             <span className="text-xs text-[#6c7086]">Built-in PDF viewer unavailable</span>
             <RippleBtn onClick={() => invoke("open_paper_pdf", {
               workspacePath, folderName: currentPaper?.folder_name, arxivId: currentPaper?.arxiv_id,
-            })} className="rounded bg-[#45475a] px-3 py-1.5 text-xs text-[#cdd6f4] hover:bg-[#585b70]">
+            })} className={`rounded px-3 py-1.5 text-xs ${BTN.surface1}`}>
               Open Externally
             </RippleBtn>
           </div>

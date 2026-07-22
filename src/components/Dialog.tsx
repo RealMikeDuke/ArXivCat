@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ReactNode } from "react";
+import { useStore, BTN } from "../store";
 import RippleBtn from "./Ripple";
 
 interface DialogProps {
@@ -21,11 +22,11 @@ export default function Dialog({
   const [alive, setAlive] = useState(false);
   const [visible, setVisible] = useState(false);
   const prevOpen = useRef(false);
+  const titleRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (open && !prevOpen.current) {
-      setAlive(true);
-    }
+    if (open && !prevOpen.current) { setAlive(true); }
     if (!open && prevOpen.current) {
       setVisible(false);
       const t = setTimeout(() => setAlive(false), 150);
@@ -43,16 +44,23 @@ export default function Dialog({
     return () => cancelAnimationFrame(raf);
   }, [alive]);
 
+  useEffect(() => {
+    if (!alive) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [alive, onClose]);
+
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ w: defaultWidth, h: defaultHeight });
   const [resizing, setResizing] = useState(false);
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
   const [moving, setMoving] = useState(false);
   const moveStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
-  const titleRef = useRef<HTMLDivElement>(null);
 
   const onResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    useStore.getState().addLog("[DEBUG] onResizeStart fired");
     if (!pos) {
       const rect = titleRef.current?.parentElement?.getBoundingClientRect();
       if (rect) setPos({ x: rect.left, y: rect.top });
@@ -62,19 +70,27 @@ export default function Dialog({
   }, [size, pos]);
 
   useEffect(() => {
-    if (!resizing) return;
+    if (!resizing) { useStore.getState().addLog("[DEBUG] resize effect: resizing=false, skip"); return; }
+    const el = dialogRef.current;
+    if (!el) { useStore.getState().addLog("[DEBUG] resize effect: el null"); return; }
+    useStore.getState().addLog("[DEBUG] resize effect: adding listeners");
+    el.style.transition = "none";
     const onMove = (e: MouseEvent) => {
+      useStore.getState().addLog("[DEBUG] resize onMove");
       const dx = e.clientX - resizeStart.current.x;
       const dy = e.clientY - resizeStart.current.y;
       const pw = window.innerWidth, ph = window.innerHeight;
       const px = pos?.x ?? (pw - size.w) / 2;
       const py = pos?.y ?? (ph - size.h) / 2;
-      setSize({
-        w: Math.max(minWidth, Math.min(pw - px - 20, resizeStart.current.w + dx)),
-        h: Math.max(minHeight, Math.min(ph - py - 20, resizeStart.current.h + dy)),
-      });
+      el.style.width = Math.max(minWidth, Math.min(pw - px - 20, resizeStart.current.w + dx)) + "px";
+      el.style.height = Math.max(minHeight, Math.min(ph - py - 20, resizeStart.current.h + dy)) + "px";
     };
-    const onUp = () => setResizing(false);
+    const onUp = () => {
+      useStore.getState().addLog("[DEBUG] resize onUp");
+      el.style.transition = "";
+      setSize({ w: el.offsetWidth, h: el.offsetHeight });
+      setResizing(false);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
@@ -94,13 +110,21 @@ export default function Dialog({
 
   useEffect(() => {
     if (!moving) return;
+    const el = dialogRef.current;
+    if (!el) return;
+    el.style.transition = "none";
     const onMove = (e: MouseEvent) => {
-      setPos({
-        x: Math.max(20, Math.min(window.innerWidth - size.w - 20, moveStart.current.px + e.clientX - moveStart.current.x)),
-        y: Math.max(20, Math.min(window.innerHeight - size.h - 20, moveStart.current.py + e.clientY - moveStart.current.y)),
-      });
+      el.style.position = "fixed";
+      el.style.margin = "0";
+      el.style.left = Math.max(20, Math.min(window.innerWidth - size.w - 20, moveStart.current.px + e.clientX - moveStart.current.x)) + "px";
+      el.style.top = Math.max(20, Math.min(window.innerHeight - size.h - 20, moveStart.current.py + e.clientY - moveStart.current.y)) + "px";
     };
-    const onUp = () => setMoving(false);
+    const onUp = () => {
+      el.style.transition = "";
+      setPos({ x: parseInt(el.style.left), y: parseInt(el.style.top) });
+      setMoving(false);
+    };
+    useStore.getState().addLog("[DEBUG] move effect: adding listeners");
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
@@ -112,7 +136,7 @@ export default function Dialog({
     <div style={{ opacity: visible ? 1 : 0, transition: "opacity 0.15s ease-out" }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !moving && !resizing) onClose(); }}>
-      <div style={{
+      <div ref={dialogRef} style={{
         width: size.w, height: size.h,
         transform: visible ? "scale(1)" : "scale(0.95)",
         opacity: visible ? 1 : 0,
@@ -124,9 +148,9 @@ export default function Dialog({
           <span className="font-semibold text-[#cdd6f4] text-sm">{title}</span>
           <div className="flex-1" />
           {headerExtra}
-          <RippleBtn onClick={onClose} className="rounded bg-[#313244] px-3 py-1 text-xs text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4] transition-colors">Close</RippleBtn>
+          <RippleBtn onClick={onClose} className={`rounded px-3 py-1 text-xs ${BTN.surface0} transition-colors`}>Close</RippleBtn>
         </div>
-        {children}
+        <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
         <div onMouseDown={onResizeStart}
           className="absolute bottom-0 right-0 z-50 h-5 w-5 cursor-nw-resize flex items-end justify-end overflow-hidden opacity-60 hover:opacity-100 transition-opacity">
           <svg viewBox="0 0 20 20" className="h-full w-full">

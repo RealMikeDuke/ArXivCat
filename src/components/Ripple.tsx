@@ -5,5 +5,5 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export default function RippleBtn({ children, className = "", ...props }: Props) {
-  return <button className={className} {...props}>{children}</button>;
+  return <button className={`transition-colors ${className}`} {...props}>{children}</button>;
 }

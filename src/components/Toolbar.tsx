@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
-import { useStore } from "../store";
+import { useState, useEffect, useRef } from "react";
+import { useStore, BTN } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import RippleBtn from "./Ripple";
+import Dropdown from "./Dropdown";
 import { useShallow } from "zustand/react/shallow";
 
 export default function Toolbar() {
@@ -27,6 +28,7 @@ export default function Toolbar() {
 
   const [arxivInput, setArxivInput] = useState("");
 
+  const tokenBtnRef = useRef<HTMLDivElement>(null);
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
   const [tokenStatus, setTokenStatus] = useState<{ has_token: boolean; masked: string } | null>(null);
@@ -34,7 +36,7 @@ export default function Toolbar() {
   useEffect(() => {
     invoke<{ has_token: boolean; masked: string }>("get_token_status")
       .then(setTokenStatus)
-      .catch(() => {});
+      .catch((e: any) => { useStore.getState().addLog(`[ERROR] Failed to get token status: ${e}`); });
   }, []);
 
   // Set up download event listeners
@@ -83,8 +85,8 @@ export default function Toolbar() {
       if (folder) {
         await openWorkspace(folder as string);
       }
-    } catch {
-      // fallback
+    } catch (e) {
+      useStore.getState().addLog(`[ERROR] Failed to open folder dialog: ${e}`);
     }
   };
 
@@ -95,8 +97,9 @@ export default function Toolbar() {
       setTokenInput("");
       const status = await invoke<{ has_token: boolean; masked: string }>("get_token_status");
       setTokenStatus(status);
+      useStore.getState().addLog("[OK] API token saved");
     } catch (e) {
-      console.error(e);
+      useStore.getState().addLog(`[ERROR] Failed to set token: ${e}`);
     }
   };
 
@@ -106,7 +109,7 @@ export default function Toolbar() {
         <>
           <RippleBtn
             onClick={scanPdfs}
-            className="rounded bg-[#45475a] px-3 py-1.5 text-sm text-[#cdd6f4] hover:bg-[#585b70]"
+            className={`rounded px-3 py-1.5 text-sm ${BTN.surface1}`}
           >
             Scan PDFs
           </RippleBtn>
@@ -114,7 +117,7 @@ export default function Toolbar() {
             <RippleBtn
               onClick={downloadAll}
               disabled={download.inProgress}
-              className="rounded bg-[#45475a] px-3 py-1.5 text-sm text-[#cdd6f4] hover:bg-[#585b70] disabled:opacity-50"
+              className={`rounded px-3 py-1.5 text-sm disabled:opacity-50 ${BTN.surface1}`}
             >
               {download.inProgress ? `${download.current}/${download.total}` : "Download All"}
             </RippleBtn>
@@ -139,7 +142,7 @@ export default function Toolbar() {
                   setArxivInput("");
                 }
               }}
-              className="rounded bg-[#89b4fa] px-3 py-1.5 text-sm text-[#1e1e2e] hover:bg-[#b4d0fb]"
+              className={`rounded px-3 py-1.5 text-sm ${BTN.blue}`}
             >
               Download
             </RippleBtn>
@@ -148,8 +151,8 @@ export default function Toolbar() {
             onClick={toggleLeftPanel}
             className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
               leftPanelOpen
-                ? "bg-[#89b4fa] text-[#1e1e2e]"
-                : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+                ? BTN.blue
+                : BTN.surface1
             }`}
           >
             Papers
@@ -159,8 +162,8 @@ export default function Toolbar() {
               onClick={toggleSideChat}
               className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
                 sideChatOpen
-                  ? "bg-[#89b4fa] text-[#1e1e2e]"
-                  : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+                  ? BTN.blue
+                  : BTN.surface1
               }`}
             >
               Side Chat
@@ -170,8 +173,8 @@ export default function Toolbar() {
             onClick={toggleGlobalChat}
             className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
               globalChatOpen
-                ? "bg-[#89b4fa] text-[#1e1e2e]"
-                : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+                ? BTN.blue
+                : BTN.surface1
             }`}
           >
             Global Chat
@@ -179,7 +182,7 @@ export default function Toolbar() {
           <div className="flex-1" />
           <RippleBtn
             onClick={handleOpenFolder}
-            className="max-w-[200px] truncate rounded bg-[#45475a] px-2 py-1.5 text-xs text-[#cdd6f4] hover:bg-[#585b70]"
+            className={`max-w-[200px] truncate rounded px-2 py-1.5 text-xs ${BTN.surface1}`}
             title="Click to change workspace folder"
           >
             {workspacePath}
@@ -189,25 +192,27 @@ export default function Toolbar() {
 
       <RippleBtn
         onClick={toggleLog}
-        className="rounded px-2 py-1.5 text-xs bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+        className={`rounded px-2 py-1.5 text-xs ${BTN.surface1}`}
       >
         Log
       </RippleBtn>
 
       <div className="relative">
-        <RippleBtn
-          onClick={() => setShowTokenInput(!showTokenInput)}
+        <span ref={tokenBtnRef}>
+          <RippleBtn
+            onClick={() => setShowTokenInput(!showTokenInput)}
           className={`rounded px-2 py-1.5 text-xs ${
             tokenStatus?.has_token
-              ? "bg-[#a6e3a1] text-[#1e1e2e]"
-              : "bg-[#45475a] text-[#cdd6f4] hover:bg-[#585b70]"
+              ? BTN.green
+              : BTN.surface1
           }`}
         >
           Token
         </RippleBtn>
-
-        {showTokenInput && (
-          <div className="absolute right-0 top-full z-50 mt-1 rounded border border-[#45475a] bg-[#1e1e2e] p-3 shadow-lg">
+        </span>
+        <Dropdown open={showTokenInput} onClose={() => setShowTokenInput(false)}
+          anchorRef={tokenBtnRef} width={300}>
+          <div className="p-3">
             {tokenStatus?.has_token && (
               <div className="mb-2 text-xs text-[#a6e3a1]">
                 Token: {tokenStatus.masked}
@@ -222,12 +227,12 @@ export default function Toolbar() {
             />
             <RippleBtn
               onClick={handleSetToken}
-              className="rounded bg-[#89b4fa] px-3 py-1 text-sm text-[#1e1e2e]"
+              className={`rounded px-3 py-1 text-sm ${BTN.blue}`}
             >
               Save
             </RippleBtn>
           </div>
-        )}
+        </Dropdown>
       </div>
     </div>
   );

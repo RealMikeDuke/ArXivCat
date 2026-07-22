@@ -11,6 +11,7 @@
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
 *::-webkit-scrollbar-thumb:hover { background: #585b70; }
+*::-webkit-scrollbar-corner { background: transparent; }
 
 @keyframes ripple-grow {
   from { transform: scale(0); }
@@ -20,6 +21,11 @@
 @keyframes ripple-shrink {
   from { transform: scale(2); opacity: 0.5; }
   to { transform: scale(0); opacity: 0; }
+}
+
+@keyframes toast-slidein {
+  from { transform: translateY(0.75rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 @keyframes toast-slideout {

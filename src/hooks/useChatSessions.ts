@@ -65,7 +65,8 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
         setActiveIdx(-1);
         setMessages([]);
       }
-    } catch {
+    } catch (e) {
+      useStore.getState().addLog(`[ERROR] Failed to load sessions: ${e}`);
       setSessions([]);
       setActiveIdx(-1);
       setMessages([]);
@@ -110,7 +111,9 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
           return next;
         });
       }
-    } catch { /* silent */ }
+    } catch (e) {
+      useStore.getState().addLog(`[ERROR] Failed to save chat session: ${e}`);
+    }
     savingRef.current = false;
   }, [activeIdx, sessionDir, sessions, model, reasoningEffort]);
 
@@ -154,14 +157,16 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
         next[idx] = { ...next[idx], title };
         return next;
       });
-    } catch { /* silent */ }
+    } catch (e) {
+      useStore.getState().addLog(`[ERROR] Failed to rename session: ${e}`);
+    }
   }, [sessions, sessionDir]);
 
   const deleteSession = useCallback(async (idx: number) => {
     if (idx < 0 || idx >= sessions.length) return;
     const s = sessions[idx];
     if (s.path) {
-      try { await invoke("delete_chat_session_data", { path: s.path }); } catch { /* silent */ }
+      try { await invoke("delete_chat_session_data", { path: s.path }); } catch (e) { useStore.getState().addLog(`[ERROR] Failed to delete session: ${e}`); }
     }
     await loadSessionList();
     setActiveIdx(-1);
@@ -239,7 +244,7 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
         return next;
       });
       if (path) {
-        invoke("rename_chat_session_data", { path, newTitle: title }).catch(() => {});
+        invoke("rename_chat_session_data", { path, newTitle: title }).catch((e: any) => { useStore.getState().addLog(`[ERROR] Failed to rename session on disk: ${e}`); });
       }
     } catch (e) {
       addLog(`[title] error: ${e}`);
@@ -287,6 +292,7 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
       });
       setSessionId(session_id);
     } catch (e) {
+      useStore.getState().addLog(`[ERROR] Failed to start chat: ${e}`);
       setStatus(`error: ${e}`);
       setStreaming(false);
     }
@@ -294,7 +300,7 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
 
   const cancelChat = useCallback(async () => {
     if (sessionId) {
-      try { await invoke("cancel_chat", { sessionId }); } catch {}
+      try { await invoke("cancel_chat", { sessionId }); } catch (e) { useStore.getState().addLog(`[ERROR] Failed to cancel chat: ${e}`); }
     }
     setSessionId(null);
     setStreaming(false);

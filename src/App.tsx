@@ -14,7 +14,7 @@ function LogCopyButton({ messages }: { messages: string[] }) {
   const showToast = useStore((s) => s.showToast);
   return (
     <RippleBtn onClick={() => {
-      navigator.clipboard.writeText(messages.join("\n")).then(() => showToast("Copied!")).catch(() => {});
+      navigator.clipboard.writeText(messages.join("\n")).then(() => showToast("Copied!")).catch((e: any) => { useStore.getState().addLog(`[ERROR] Failed to copy log: ${e}`); });
     }} className="rounded bg-[#313244] px-3 py-1 text-xs text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4] transition-colors">
       Copy
     </RippleBtn>

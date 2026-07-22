@@ -113,7 +113,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     }
 
     let _ = arxivcat_core::chat::description::build_description(
-        &output_dir, &arxiv_id, "", None,
+        &output_dir, &arxiv_id, "", None, None,
     )
     .await;
 
