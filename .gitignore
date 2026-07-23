@@ -31,3 +31,6 @@ tests/_data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Android Gradle cache
+android-app/.gradle/
