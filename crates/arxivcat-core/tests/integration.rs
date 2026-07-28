@@ -27,11 +27,73 @@ mod integration_tests {
         assert_eq!(extract_arxiv_id("arxiv"), None);
     }
 
+    // ─── arXiv URL Robustness ───
+
+    #[test]
+    fn arxiv_id_url_pdf_format() {
+        assert_eq!(
+            extract_arxiv_id("arxiv.org/pdf/2501.12948"),
+            Some("2501.12948".into())
+        );
+        assert_eq!(
+            extract_arxiv_id("https://arxiv.org/pdf/2501.12948"),
+            Some("2501.12948".into())
+        );
+        assert_eq!(
+            extract_arxiv_id("https://arxiv.org/pdf/2501.12948.pdf"),
+            Some("2501.12948".into())
+        );
+    }
+
+    #[test]
+    fn arxiv_id_url_versioned() {
+        assert_eq!(
+            extract_arxiv_id("https://arxiv.org/abs/2501.12948v2"),
+            Some("2501.12948v2".into())
+        );
+        assert_eq!(
+            extract_arxiv_id("arxiv.org/pdf/2501.12948v3"),
+            Some("2501.12948v3".into())
+        );
+    }
+
+    #[test]
+    fn arxiv_id_url_www_prefix() {
+        assert_eq!(
+            extract_arxiv_id("www.arxiv.org/abs/2501.12948"),
+            Some("2501.12948".into())
+        );
+        assert_eq!(
+            extract_arxiv_id("http://www.arxiv.org/pdf/2501.12948"),
+            Some("2501.12948".into())
+        );
+    }
+
+    #[test]
+    fn arxiv_id_url_trailing_slash() {
+        assert_eq!(
+            extract_arxiv_id("https://arxiv.org/abs/2501.12948/"),
+            Some("2501.12948".into())
+        );
+    }
+
+    #[test]
+    fn arxiv_id_url_whitespace_around() {
+        assert_eq!(
+            extract_arxiv_id("  https://arxiv.org/abs/2501.12948  "),
+            Some("2501.12948".into())
+        );
+        assert_eq!(
+            extract_arxiv_id("\thttps://arxiv.org/abs/2501.12948\n"),
+            Some("2501.12948".into())
+        );
+    }
+
     // ─── Filename Sanitization ───
 
     #[test]
     fn sanitize_edge_cases() {
-        assert_eq!(sanitize_filename(""), "");
+        assert_eq!(sanitize_filename(""), "untitled");
         assert_eq!(sanitize_filename("a"), "a");
         assert_eq!(sanitize_filename("hello  world"), "hello_world");
         assert_eq!(sanitize_filename("___test___"), "test");

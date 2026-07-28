@@ -189,9 +189,9 @@ pub async fn cmd_download_all(cli: &Cli) {
             }
             Err(e) => {
                 eprintln!("\n{} {}: {e}", err("error"), paper.arxiv_id);
-            }
         }
     }
+}
 
     println!();
     println!(
@@ -209,6 +209,19 @@ pub async fn cmd_download_all(cli: &Cli) {
     }
 }
 
+fn resolve_view_file(view: &str) -> Result<&'static str, String> {
+    match view {
+        "body" => Ok("body.tex"),
+        "appendix" => Ok("appendix.tex"),
+        "note" => Ok("note.txt"),
+        "description" => Ok("description.md"),
+        _ => Err(format!(
+            "unknown view '{}'. options: body, appendix, note, description",
+            view
+        )),
+    }
+}
+
 pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
     let ws = open_ws(cli);
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
@@ -219,13 +232,10 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
         }
     };
 
-    let file = match view {
-        "body" => "body.tex",
-        "appendix" => "appendix.tex",
-        "note" => "note.txt",
-        "description" => "description.md",
-        _ => {
-            eprintln!("{}: unknown view '{view}'. options: body, appendix, note, description", err("error"));
+    let file = match resolve_view_file(view) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}: {e}", err("error"));
             std::process::exit(1);
         }
     };
@@ -449,5 +459,25 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             println!("  {:<18} {:>8} bytes", label, size);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_view_file_valid() {
+        assert_eq!(resolve_view_file("body").unwrap(), "body.tex");
+        assert_eq!(resolve_view_file("appendix").unwrap(), "appendix.tex");
+        assert_eq!(resolve_view_file("note").unwrap(), "note.txt");
+        assert_eq!(resolve_view_file("description").unwrap(), "description.md");
+    }
+
+    #[test]
+    fn test_resolve_view_file_invalid() {
+        assert!(resolve_view_file("invalid").is_err());
+        assert!(resolve_view_file("").is_err());
+        assert!(resolve_view_file("BODY").is_err());
     }
 }

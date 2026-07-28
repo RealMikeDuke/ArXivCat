@@ -108,3 +108,39 @@ pub fn load_model_preference() -> String {
         .and_then(|c| c.chat_model)
         .unwrap_or_else(|| "Flash".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_deserialize_corrupted() {
+        assert!(serde_json::from_str::<Config>("garbage").is_err());
+        assert!(serde_json::from_str::<Config>("{{{[").is_err());
+        assert!(serde_json::from_str::<Config>("").is_err());
+    }
+
+    #[test]
+    fn test_config_deserialize_empty_object() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.deepseek_api_key, None);
+        assert_eq!(config.workspace_path, None);
+        assert_eq!(config.chat_model, None);
+    }
+
+    #[test]
+    fn test_config_deserialize_partial_fields() {
+        let config: Config =
+            serde_json::from_str(r#"{"workspace_path": "/my/ws"}"#).unwrap();
+        assert_eq!(config.workspace_path, Some("/my/ws".into()));
+        assert_eq!(config.deepseek_api_key, None);
+        assert_eq!(config.chat_model, None);
+    }
+
+    #[test]
+    fn test_config_deserialize_extra_fields_ignored() {
+        let config: Config =
+            serde_json::from_str(r#"{"workspace_path": "/ws", "unknown": 123}"#).unwrap();
+        assert_eq!(config.workspace_path, Some("/ws".into()));
+    }
+}

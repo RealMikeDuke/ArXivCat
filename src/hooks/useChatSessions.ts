@@ -181,11 +181,7 @@ export function useChatSessions(sessionDir: string | null, model: string, reason
     const setup = async () => {
       const unlistenToken = await listen<{ session_id: string; token: string }>("chat:token", (e) => {
         if (e.payload.session_id !== sessionId) return;
-        setLocalBuffer((prev) => {
-          const token = e.payload.token;
-          if (prev.startsWith(token)) return token;
-          return prev + token;
-        });
+        setLocalBuffer((prev) => prev + e.payload.token);
         setStatus("");
       });
       unlisteners.push(unlistenToken);

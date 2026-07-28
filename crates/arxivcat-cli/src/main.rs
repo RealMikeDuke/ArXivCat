@@ -9,7 +9,7 @@ pub struct Cli {
     #[arg(short = 'w', long, help = "Override workspace path")]
     pub workspace: Option<PathBuf>,
 
-    #[arg(long, help = "Output as JSON (machine-readable)")]
+    #[arg(long, global = true, help = "Output as JSON (machine-readable)")]
     pub json: bool,
 
     #[command(subcommand)]

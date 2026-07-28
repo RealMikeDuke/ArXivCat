@@ -3,6 +3,7 @@
 This document is for future maintainers and contributors. It explains the full architecture, key design decisions, and code paths of the ArXivCat project.
 
 **参见：[conventions.md](./conventions.md)** — 预设（BTN/TOAST）、组件约定、命名规则。
+**注意：`docs/archive/` 为历史快照，勿改。当前状态以本文为准。**
 
 ---
 
@@ -131,7 +132,7 @@ User clicks tab button → tabClick(key)
 ```
 
 This split (visual feedback first, content later) is the key performance optimization
-that makes tab switching feel instant. See §7 for details.
+that makes tab switching feel instant. See §8 for details.
 
 ---
 
@@ -258,7 +259,80 @@ Full CRUD: save, load, list (sorted by modified date), rename, delete.
 
 ---
 
-## 5. Rust Backend: src-tauri (Tauri Commands)
+## 5. Rust CLI: arxivcat-cli
+
+Binary name: `arxivcat`. Built via `cargo build --release --bin arxivcat`. Source at `crates/arxivcat-cli/`.
+
+### Global Flags
+
+| Flag | Description |
+|---|---|
+| `-w, --workspace <PATH>` | Override workspace path for this invocation. If omitted, uses path from config (`APPDATA/ArxivCat/config.json`). If explicitly passed but path does not exist, errors immediately. |
+| `--json` | Output machine-readable JSON. Can be placed anywhere in the command (before or after subcommand). Supported by: `list`, `download`, `download-all`, `preview`, `info`, `token status`. |
+
+### 5.1 workspace
+
+```
+arxivcat -w /path/to/ws workspace open /path/to/ws    # Set workspace
+arxivcat workspace scan                               # Scan for untracked PDFs
+```
+
+| Subcommand | Description |
+|---|---|
+| `open <PATH>` | Persist workspace path to config. |
+| `scan` | Scan workspace root for PDFs, extract arXiv IDs from PDF metadata, create paper folders with `note.txt` + `description.md` stubs. Skips already-tracked papers. |
+
+### 5.2 paper
+
+| Subcommand | Description |
+|---|---|
+| `list` | List all papers with status: `[C]` complete, `[P]` pending (has body, no description), `[.]` incomplete. JSON: array of paper objects with `arxiv_id`, `title`, `has_body`, `description_ready`, `is_complete`. |
+| `download <ID_OR_URL>` | Full pipeline: parse arXiv ID from raw ID or URL → fetch title → download source tar.gz → extract `body.tex`/`appendix.tex` → download PDF → generate AI description. JSON: `{arxiv_id, folder, body_length, appendix_length, description_ready}`. |
+| `download-all` | Batch-process all `[P]` papers sequentially. JSON: `{status, success, total}`. |
+| `preview <ID_OR_QUERY> -v <VIEW>` | Print file content. `-v` values: `body` (default), `appendix`, `note`, `description`. ID can be bare ID, partial match, or full arXiv URL. JSON: `{arxiv_id, title, view, content}`. |
+| `note <ID_OR_QUERY> [TEXT]` | Without args: print `note.txt`. With TEXT: overwrite note. `-e` flag: open in `$EDITOR` (falls back to `notepad` on Windows). |
+| `strip <ID_OR_QUERY>` | Strip LaTeX comments from `body.tex`, collapse 3+ blank lines → 2, print to stdout. |
+| `open <ID_OR_QUERY>` | Open paper folder in system file manager. |
+| `pdf <ID_OR_QUERY>` | Open local PDF, or fallback to `https://arxiv.org/pdf/{id}`. |
+| `info <ID_OR_QUERY>` | Show arXiv ID, title, folder path, file sizes. JSON: full paper object with `files` map. |
+
+**ID matching**: Most `paper` subcommands accept both raw arXiv IDs (`2501.12948`), partial IDs (`2501` matches `2501.12948`), and full URLs (`https://arxiv.org/abs/2501.12948`, `arxiv.org/pdf/2501.12948.pdf`, `www.arxiv.org/abs/2501.12948v2`, with or without surrounding whitespace). The `download` subcommand additionally strips the ID from URL input before proceeding.
+
+### 5.3 chat
+
+| Subcommand | Description |
+|---|---|
+| `side <ID_OR_QUERY>` | Interactive REPL chat scoped to one paper. Commands: `/model Flash\|Pro`, `/thinking` (toggle), `/context body\|appendix\|description\|note` (toggle), `/save`, `/load`, `/history`, `/clear`, `/quit`. |
+| `global` | Interactive chat over all papers' descriptions from the workspace. Same REPL commands as `side`. |
+
+Sessions persist as JSON files in `{paper_folder}/arxiv_chats/` (side) or `{workspace}/arxivcat_global_chats/` (global). Requires DeepSeek API key.
+
+### 5.4 token
+
+| Subcommand | Description |
+|---|---|
+| `status` | Show whether token is configured (masked, e.g. `sk-5...7abe`) and validate it. JSON: `{configured, masked, valid}`. |
+| `set` | Prompt to enter DeepSeek API token (from stdin). Saved to config. |
+| `validate` | Test cached token against `https://api.deepseek.com/models`. |
+
+### Examples
+
+```
+arxivcat -w F:\zrs\paper paper list
+arxivcat -w F:\zrs\paper --json paper info 2501.12948
+arxivcat paper list --json                        # --json works after subcommand too
+arxivcat paper download arxiv.org/abs/2501.12948  # accepts URLs
+arxivcat paper preview 2501.12948 -v appendix     # view appendix
+arxivcat paper note 1706.03762 "my thoughts"      # write note
+arxivcat paper strip 2501.12948                   # strip LaTeX comments
+arxivcat -w /bad/path paper list                  # errors immediately if -w path invalid
+```
+
+**完整 CLI 使用手册见 [cli.md](./cli.md)** — 面向外部用户和 AI agent 的独立参考文档。
+
+---
+
+## 6. Rust Backend: src-tauri (Tauri Commands)
 
 `commands.rs` has 30+ `#[tauri::command]` functions. Key groups:
 
@@ -307,7 +381,7 @@ Streaming uses Tauri's `Emitter` pattern:
 
 ---
 
-## 6. React Frontend
+## 7. React Frontend
 
 ### 6.1 State Management (`store.ts`)
 
@@ -331,7 +405,7 @@ logMessages[]      Rolling log buffer (max 100)
 ```
 
 Components use `useStore(selector)` (individual selectors) or `useStore(useShallow(...))`
-to subscribe only to the fields they need. This is critical for performance — see §7.
+to subscribe only to the fields they need. This is critical for performance — see §8.
 
 ### 6.2 Component Tree
 
@@ -367,7 +441,7 @@ Preview (memo-wrapped)
 ```
 
 Key state: `activeTab` (local, instant feedback) vs `currentView` (store, content switch).
-See §7.3 for the tab switching optimization.
+See §8.3 for the tab switching optimization.
 
 ### 6.4 The PreView Component
 
@@ -399,7 +473,7 @@ discovery that space marking caused selection/copy issues).
 
 ---
 
-## 7. Performance Architecture
+## 8. Performance Architecture
 
 ### 7.1 Layer 1: Store Subscription Isolation
 
@@ -486,7 +560,7 @@ This blocked React's state update. Fixed by deferring to `requestAnimationFrame`
 
 ---
 
-## 8. Chat System (Component Architecture)
+## 9. Chat System (Component Architecture)
 
 ### 8.1 Overview
 
@@ -594,7 +668,7 @@ sendMessage(content, context)
 
 ---
 
-## 9. Draft System
+## 10. Draft System
 
 ### 9.1 Purpose
 
@@ -624,7 +698,7 @@ mode with the draft content.
 
 ---
 
-## 10. Styling & Theme
+## 11. Styling & Theme
 
 ### 10.1 Color Palette
 
@@ -729,7 +803,7 @@ during drag/resize to avoid lag. See `Dialog.tsx:67-108`.
 
 ---
 
-## 11. Build & Development
+## 12. Build & Development
 
 ### 11.1 Development
 
@@ -786,7 +860,7 @@ Output: `target/release/arxivcat-gui.exe`
 
 ---
 
-## 12. Known Design Decisions & Trade-offs
+## 13. Known Design Decisions & Trade-offs
 
 ### 12.1 LaTeX Extraction is Heuristic
 
@@ -900,21 +974,42 @@ scratch (no migration from Tkinter widgets — they share nothing architecturall
 
 ---
 
-## 13. Test Coverage (arxivcat-core)
+## 14. Test Coverage
 
-### Unit Tests (28 pass)
+### Unit Tests — arxivcat-core (44 pass)
+
 | Area | Tests | What's covered |
 |---|---|---|
 | arXiv ID parsing | 7 | URL, raw, version, underscore, invalid, text, empty |
 | TeX processing | 9 | Strip comments, find main, expand inputs (flat/nested/cycle), body/appendix split |
-| Source/cache | 2 | find_main_tex prefers main.tex, fresh_folder_name increments |
+| Source/cache | 5 | find_main_tex prefers main.tex, fresh_folder_name, tar extraction, tar safety |
 | Workspace | 5 | Paper from folder (complete/pending), skips hidden/internal dirs, list |
 | Chat session | 5 | Save/load, list sorted, rename, delete, empty save is no-op |
+| Chat context | 7 | Global context (empty/body/multi-field/skip), selection delta computation |
+| Config | 4 | Corrupted JSON, empty object, partial fields, extra fields ignored |
+| Filename sanitize | 2 | Illegal chars, length truncation |
 
-### Integration Tests (17 pass)
-Mixed arXiv IDs, filename sanitization, multiline comments, nested input expansion,
-triple-cycle detection, body/appendix with bibliography, workspace mixed papers,
-config roundtrip, side chat context building.
+### Unit Tests — arxivcat-cli (11 pass)
+
+| Area | Tests | What's covered |
+|---|---|---|
+| find_paper | 6 | Direct ID, abs/pdf/www/versioned URL, edge cases (nonexistent, whitespace) |
+| resolve_workspace | 2 | `-w` flag (valid path, invalid path → error) |
+| resolve_view_file | 2 | Valid views (body/appendix/note/description), invalid views (empty/unknown/case) |
+| resolve_workspace (config) | — | Not covered; requires config.rs refactor for injectable paths |
+
+### Integration Tests — arxivcat-core (22 pass)
+
+| Area | Tests |
+|---|---|
+| arXiv ID parsing | Mixed formats, PDF URLs, versioned URLs, www prefix, trailing slash, whitespace |
+| Filename sanitization | Empty string → "untitled", illegal chars, underscores |
+| TeX processing | Escaped percent comments, multiline comments, missing file preservation |
+| Input expansion | Nested includes, deep cycle detection (a→b→c→a) |
+| Body/appendix | With bibliography, without appendix/biography |
+| Workspace | Empty dir, mixed papers, partial ID lookup |
+| Config | Roundtrip (token, model, workspace) |
+| Chat | Session save/load empty, side context with/without selection, empty dir |
 
 ### Not Verified (need network or API key)
 - Actual arXiv download + extraction
@@ -924,7 +1019,7 @@ config roundtrip, side chat context building.
 
 ---
 
-## 14. Dependency Map (Python ↔ Rust)
+## 15. Dependency Map (Python ↔ Rust)
 
 | Purpose | Python | Rust |
 |---|---|---|
@@ -942,7 +1037,7 @@ config roundtrip, side chat context building.
 
 ---
 
-## 15. Things to Watch Out For
+## 16. Things to Watch Out For
 
 ### Cache Handling
 The cache logic (`download_source` → validate → repair → fallback) is resilient
@@ -981,7 +1076,7 @@ The project uses a concise, practical README style:
 
 ---
 
-## 16. Archived Documentation
+## 17. Archived Documentation
 
 The following documents are preserved in `docs/archive/` for historical reference.
 Most of their content has been incorporated into this guidebook.
@@ -994,7 +1089,7 @@ Most of their content has been incorporated into this guidebook.
 
 ---
 
-## 17. Future Work (Open Questions)
+## 18. Future Work (Open Questions)
 
 - **Android build** — Requires Java/Android SDK setup, responsive layout design
 - **PDF.js fallback** — For platforms without native PDF rendering (Android, some Linux)
