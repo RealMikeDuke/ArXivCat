@@ -61,7 +61,16 @@ pub enum PaperCmd {
     Download { id_or_url: String },
 
     #[command(about = "Download all pending papers in workspace")]
-    DownloadAll,
+    DownloadAll {
+        /// Number of parallel downloads (1-8). Bound to the 429 retry/backoff
+        /// contract: raising jobs without backoff is not allowed.
+        #[arg(long, default_value_t = 4)]
+        jobs: u8,
+
+        /// Ignore the 24h per-paper retry cooldown.
+        #[arg(long)]
+        force: bool,
+    },
 
     #[command(about = "Show paper preview")]
     Preview {
@@ -166,7 +175,9 @@ async fn main() {
             PaperCmd::Download { id_or_url } => {
                 commands::paper::cmd_download(&cli, id_or_url).await
             }
-            PaperCmd::DownloadAll => commands::paper::cmd_download_all(&cli).await,
+            PaperCmd::DownloadAll { jobs, force } => {
+                commands::paper::cmd_download_all(&cli, *jobs, *force).await
+            }
             PaperCmd::Preview { id_or_query, view } => {
                 commands::paper::cmd_preview(&cli, id_or_query, view).await
             }

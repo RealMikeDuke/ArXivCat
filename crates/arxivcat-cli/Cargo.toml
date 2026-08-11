@@ -12,7 +12,7 @@ path = "src/main.rs"
 arxivcat-core = { path = "../arxivcat-core" }
 clap = { workspace = true }
 owo-colors = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 serde_json = { workspace = true }
 regex = { workspace = true }
 tempfile = "3"

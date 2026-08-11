@@ -7,7 +7,6 @@ use crate::Cli;
 use owo_colors::OwoColorize;
 
 fn ok(s: &str) -> String { s.green().to_string() }
-fn err(s: &str) -> String { s.red().to_string() }
 fn warn(s: &str) -> String { s.yellow().to_string() }
 fn gray(s: &str) -> String { s.dimmed().to_string() }
 
@@ -138,67 +137,150 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     }
 }
 
-pub async fn cmd_download_all(cli: &Cli) {
+pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
     let ws_path = get_ws(cli);
     let ws = open_ws(cli);
-
-    let pending = ws.pending_papers();
-    if pending.is_empty() {
-        if cli.json {
-            println!("{}", serde_json::json!({"status": "complete", "count": 0}));
-        }
-        return;
-    }
-
-    eprintln!("downloading {} pending papers...", pending.len());
-
     let downloads_dir = config::get_downloads_dir();
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
         Err(e) => crate::commands::die_err(cli, &e),
     };
-    let cancel_flag = std::sync::atomic::AtomicBool::new(false);
-    let mut success = 0usize;
+
+    let jobs = jobs.clamp(1, 8);
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Split pending papers into actionable vs cooled-down (24h cooldown).
+    let mut pending: Vec<arxivcat_core::workspace::Paper> =
+        ws.papers.iter().filter(|p| !p.has_body).cloned().collect();
+    let mut skipped: Vec<serde_json::Value> = Vec::new();
+    pending.retain(|p| {
+        if let Ok(Some(m)) = arxivcat_core::manifest::PaperManifest::load(&p.folder) {
+            if arxivcat_core::manifest::in_cooldown(&m, now_ms) && !force {
+                skipped.push(serde_json::json!({
+                    "id": p.arxiv_id,
+                    "reason": "cooldown",
+                    "last_error": m.last_error,
+                }));
+                return false;
+            }
+        }
+        true
+    });
+
+    if pending.is_empty() {
+        if cli.json {
+            let mut v = serde_json::json!({
+                "status": "done",
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "skipped": skipped.len(),
+                "failures": [],
+            });
+            v["skipped_ids"] = serde_json::json!(skipped);
+            println!("{}", v);
+        }
+        return;
+    }
+
+    eprintln!("downloading {} pending papers (jobs={jobs})...", pending.len());
+
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Real Ctrl-C: flip the flag; workers observe it and the command exits 130.
+    {
+        let cancel = cancel_flag.clone();
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(jobs as usize));
+    let mut handles = Vec::new();
     let total = pending.len();
 
-    for (i, paper) in pending.iter().enumerate() {
+    for paper in pending {
         if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            println!("{}", warn("cancelled"));
+            break;
+        }
+        let permit = match sem.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            drop(permit);
             break;
         }
 
-        eprint!(
-            "\r[{}/{}] {} ...",
-            i + 1,
-            total,
-            paper.arxiv_id
-        );
+        let ws_path = ws_path.clone();
+        let downloads_dir = downloads_dir.clone();
+        let http = http.clone();
+        let cancel = cancel_flag.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            let res = arxivcat_core::workspace::process_pending_paper(
+                &http, &paper, &downloads_dir, &ws_path, &cancel,
+            )
+            .await;
+            (paper, res)
+        }));
+    }
 
-        match arxivcat_core::workspace::process_pending_paper(
-            &http,
-            paper,
-            &downloads_dir,
-            &ws_path,
-            &cancel_flag,
-        )
-        .await
-        {
-            Ok(true) => success += 1,
-            Ok(false) => {
-                eprintln!("\n{} failed: {}", warn("warn"), paper.arxiv_id);
+    let mut success = 0usize;
+    let mut failures: Vec<serde_json::Value> = Vec::new();
+    for h in handles {
+        if let Ok((paper, res)) = h.await {
+            match res {
+                Ok(true) => success += 1,
+                Ok(false) => {
+                    // cancelled mid-flight; not counted as failure
+                }
+                Err(e) => {
+                    let code = crate::commands::exit_code_for(&e);
+                    let kind = crate::commands::kind_for(&e);
+                    let msg = e.to_string();
+                    // persist 24h cooldown (P1.4)
+                    let _ = arxivcat_core::manifest::mark_failure(&paper.folder, &msg);
+                    eprintln!("{} failed: {msg}", paper.arxiv_id);
+                    failures.push(serde_json::json!({
+                        "id": paper.arxiv_id,
+                        "code": code,
+                        "kind": kind,
+                        "message": msg,
+                        "retryable": crate::commands::retryable_for(kind, &msg),
+                    }));
+                }
             }
-            Err(e) => {
-                eprintln!("\n{} {}: {e}", err("error"), paper.arxiv_id);
         }
     }
-}
 
-    eprintln!();
+    let cancelled = cancel_flag.load(std::sync::atomic::Ordering::Relaxed);
+
     if cli.json {
         println!(
             "{}",
-            serde_json::json!({"status": "done", "success": success, "total": total})
+            serde_json::json!({
+                "status": if cancelled { "cancelled" } else if failures.is_empty() { "done" } else if success > 0 { "partial" } else { "failed" },
+                "total": total,
+                "success": success,
+                "failed": failures.len(),
+                "skipped": skipped.len(),
+                "failures": failures,
+            })
         );
+    }
+
+    // Exit contract: 0 all ok, 8 partial (some failed), 1 all failed, 130 SIGINT.
+    if cancelled {
+        std::process::exit(130);
+    } else if !failures.is_empty() && success > 0 {
+        std::process::exit(crate::commands::EXIT_PARTIAL);
+    } else if !failures.is_empty() {
+        std::process::exit(crate::commands::EXIT_OTHER);
     }
 }
 

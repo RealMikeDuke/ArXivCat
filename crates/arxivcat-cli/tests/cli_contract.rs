@@ -12,8 +12,11 @@ fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_arxivcat"))
 }
 
-fn tmp_ws() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("arxivcat_contract_{}", std::process::id()));
+fn tmp_ws(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "arxivcat_contract_{}_{tag}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -51,7 +54,7 @@ fn unknown_subcommand_json_envelope() {
 
 #[test]
 fn chat_json_rejected_as_usage() {
-    let out = bin().args(["-w", tmp_ws().to_str().unwrap(), "chat", "side", "2501.12948", "--json"])
+    let out = bin().args(["-w", tmp_ws("chat").to_str().unwrap(), "chat", "side", "2501.12948", "--json"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
@@ -81,7 +84,7 @@ fn help_exits_zero() {
 
 #[test]
 fn paper_list_json_single_document() {
-    let ws = tmp_ws();
+    let ws = tmp_ws("list");
     // one complete paper folder
     let pdir = ws.join("2501_12948_Test_Paper");
     std::fs::create_dir_all(&pdir).unwrap();
@@ -100,7 +103,7 @@ fn paper_list_json_single_document() {
 
 #[test]
 fn paper_list_no_json_contract_output_ok() {
-    let ws = tmp_ws();
+    let ws = tmp_ws("list2");
     let out = bin()
         .args(["-w", ws.to_str().unwrap(), "paper", "list"])
         .output()
@@ -112,7 +115,7 @@ fn paper_list_no_json_contract_output_ok() {
 #[test]
 fn download_all_json_stdout_single_document() {
     // Empty pending list: JSON must be the only stdout content (no \r progress).
-    let ws = tmp_ws();
+    let ws = tmp_ws("downloadall");
     let pdir = ws.join("2501_12948_Test_Paper");
     std::fs::create_dir_all(&pdir).unwrap();
     std::fs::write(pdir.join("body.tex"), "x").unwrap();
@@ -125,5 +128,5 @@ fn download_all_json_stdout_single_document() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains('\r'), "no \\r progress in --json stdout: {stdout:?}");
     let v = parse_json(&stdout);
-    assert_eq!(v["status"], "complete");
+    assert_eq!(v["status"], "done", "download-all --json emits status=done");
 }
