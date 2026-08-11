@@ -73,9 +73,13 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     eprintln!("downloading {arxiv_id}...");
 
     let downloads_dir = config::get_downloads_dir();
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
 
     let (paper_dir_opt, folder_name_opt) =
-        match arxivcat_core::extract::source::download_source(&arxiv_id, &downloads_dir).await {
+        match arxivcat_core::extract::source::download_source(&http, &arxiv_id, &downloads_dir).await {
             Ok(r) => r,
             Err(e) => {
                 crate::commands::die_err(cli, &e);
@@ -103,7 +107,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
             }
         };
 
-    let _ = arxivcat_core::extract::source::download_pdf(&arxiv_id, &output_dir).await;
+    let _ = arxivcat_core::extract::source::download_pdf(&http, &arxiv_id, &output_dir).await;
 
     if let Err(e) = arxivcat_core::workspace::ensure_paper_meta_files(&output_dir) {
         eprintln!("{}: {e}", warn("warning creating meta files"));
@@ -145,6 +149,10 @@ pub async fn cmd_download_all(cli: &Cli) {
     eprintln!("downloading {} pending papers...", pending.len());
 
     let downloads_dir = config::get_downloads_dir();
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
     let cancel_flag = std::sync::atomic::AtomicBool::new(false);
     let mut success = 0usize;
     let total = pending.len();
@@ -163,6 +171,7 @@ pub async fn cmd_download_all(cli: &Cli) {
         );
 
         match arxivcat_core::workspace::process_pending_paper(
+            &http,
             paper,
             &downloads_dir,
             &ws_path,
@@ -437,7 +446,12 @@ pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
         }
     };
 
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
     match arxivcat_core::chat::description::build_description(
+        &http,
         &paper.folder,
         &paper.arxiv_id,
         &paper.title,

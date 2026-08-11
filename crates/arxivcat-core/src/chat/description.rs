@@ -6,6 +6,7 @@ use crate::error::{ArxivError, Result};
 const SYSTEM_PROMPT: &str = "You write structured markdown briefs for arXiv papers. The brief will later be used for semantic paper search inside a local workspace. Be detailed but compact, faithful to the provided paper text, and emphasize searchable technical concepts. Output markdown only. Use these sections exactly: # Overview, ## Problem, ## Method, ## Key Contributions, ## Technical Details, ## Search Tags, ## Good Match Queries.";
 
 pub async fn build_description(
+    cfg: &crate::net::HttpConfig,
     paper_dir: &Path,
     arxiv_id: &str,
     title: &str,
@@ -55,9 +56,9 @@ pub async fn build_description(
         "stream": false,
     });
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post("https://api.deepseek.com/chat/completions")
+    let response = cfg
+        .client
+        .post(cfg.deepseek_chat_url())
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&body)

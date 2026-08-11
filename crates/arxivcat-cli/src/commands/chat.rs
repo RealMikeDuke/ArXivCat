@@ -230,7 +230,12 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
         print!("Assistant: ");
         io::stdout().flush().ok();
 
+        let http = match arxivcat_core::net::HttpConfig::new() {
+            Ok(c) => c,
+            Err(e) => crate::commands::die_err(cli, &e),
+        };
         let result = chat::deepseek::stream_chat(
+            &http,
             &messages,
             &model,
             if deep_thinking { "high" } else { "off" },
@@ -460,7 +465,12 @@ pub async fn cmd_global(cli: &Cli) {
         print!("Assistant: ");
         io::stdout().flush().ok();
 
+        let http = match arxivcat_core::net::HttpConfig::new() {
+            Ok(c) => c,
+            Err(e) => crate::commands::die_err(cli, &e),
+        };
         let result = chat::deepseek::stream_chat(
+            &http,
             &messages,
             &model,
             if deep_thinking { "high" } else { "off" },

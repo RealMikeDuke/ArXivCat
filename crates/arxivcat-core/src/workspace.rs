@@ -128,7 +128,7 @@ impl Workspace {
     }
 }
 
-pub async fn scan_workspace_pdfs(workspace: &mut Workspace) -> Result<usize> {
+pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut Workspace) -> Result<usize> {
     let v_suffix_re = regex::Regex::new(r"v\d+$").unwrap();
     let mut existing_ids: HashSet<String> = workspace
         .papers
@@ -151,7 +151,7 @@ pub async fn scan_workspace_pdfs(workspace: &mut Workspace) -> Result<usize> {
                         continue;
                     }
 
-                    let title = crate::extract::arxiv::fetch_title_from_arxiv(&base_id)
+                    let title = crate::extract::arxiv::fetch_title_from_arxiv(cfg, &base_id)
                         .await
                         .unwrap_or(None)
                         .unwrap_or_else(|| "unknown".to_string());
@@ -180,6 +180,7 @@ pub async fn scan_workspace_pdfs(workspace: &mut Workspace) -> Result<usize> {
 }
 
 pub async fn process_pending_paper(
+    cfg: &crate::net::HttpConfig,
     paper: &Paper,
     downloads_dir: &Path,
     workspace_path: &Path,
@@ -197,7 +198,7 @@ pub async fn process_pending_paper(
     }
 
     let (paper_dir_opt, _) =
-        crate::extract::source::download_source(arxiv_id, downloads_dir).await?;
+        crate::extract::source::download_source(cfg, arxiv_id, downloads_dir).await?;
 
     let paper_dir = match paper_dir_opt {
         Some(d) => d,
@@ -214,7 +215,7 @@ pub async fn process_pending_paper(
         return Ok(false);
     }
 
-    let _ = download_pdf(arxiv_id, &out_dir).await;
+    let _ = download_pdf(cfg, arxiv_id, &out_dir).await;
 
     ensure_paper_meta_files(&out_dir)?;
 

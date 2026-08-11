@@ -2,14 +2,16 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ArxivError, Result};
 use crate::extract::arxiv::{fetch_title_from_arxiv, sanitize_filename};
+use crate::net::HttpConfig;
 
 pub async fn download_source(
+    cfg: &HttpConfig,
     arxiv_id: &str,
     downloads_dir: &Path,
 ) -> Result<(Option<PathBuf>, Option<String>)> {
     std::fs::create_dir_all(downloads_dir)?;
 
-    let title = fetch_title_from_arxiv(arxiv_id).await?.unwrap_or_else(|| "unknown".to_string());
+    let title = fetch_title_from_arxiv(cfg, arxiv_id).await?.unwrap_or_else(|| "unknown".to_string());
     let folder_name = format!(
         "{}_{}",
         arxiv_id.replace('.', "_"),
@@ -34,14 +36,8 @@ pub async fn download_source(
         }
     }
 
-    let tar_url = format!("https://arxiv.org/src/{arxiv_id}");
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&tar_url)
-        .timeout(std::time::Duration::from_secs(120))
-        .send()
-        .await
-        .map_err(ArxivError::Http)?;
+    let tar_url = cfg.arxiv_src_url(arxiv_id);
+    let response = cfg.get_with_retry(&tar_url).await?;
 
     if !response.status().is_success() {
         return Err(ArxivError::Other(format!(
@@ -76,20 +72,14 @@ pub async fn download_source(
     }
 }
 
-pub async fn download_pdf(arxiv_id: &str, output_dir: &Path) -> Result<Option<PathBuf>> {
+pub async fn download_pdf(cfg: &HttpConfig, arxiv_id: &str, output_dir: &Path) -> Result<Option<PathBuf>> {
     let pdf_path = output_dir.join(format!("{arxiv_id}.pdf"));
     if pdf_path.exists() {
         return Ok(Some(pdf_path));
     }
 
-    let url = format!("https://arxiv.org/pdf/{arxiv_id}");
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(120))
-        .send()
-        .await
-        .map_err(ArxivError::Http)?;
+    let url = cfg.arxiv_pdf_url(arxiv_id);
+    let response = cfg.get_with_retry(&url).await?;
 
     if !response.status().is_success() {
         return Ok(None);

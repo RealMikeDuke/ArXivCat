@@ -124,9 +124,13 @@ pub async fn cmd_validate(cli: &Cli) {
 
 async fn validate_token_inner(token: &str) -> Result<(bool, u64), String> {
     let start = std::time::Instant::now();
-    let client = reqwest::Client::new();
-    let response = match client
-        .get("https://api.deepseek.com/models")
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => return Err(e.to_string()),
+    };
+    let response = match http
+        .client
+        .get(http.deepseek_models_url())
         .header("Authorization", format!("Bearer {token}"))
         .timeout(std::time::Duration::from_secs(15))
         .send()

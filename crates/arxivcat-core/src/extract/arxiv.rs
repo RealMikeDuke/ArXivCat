@@ -60,14 +60,9 @@ fn object_to_string(value: &lopdf::Object) -> String {
     }
 }
 
-pub async fn fetch_title_from_arxiv(arxiv_id: &str) -> Result<Option<String>> {
-    let url = format!("https://arxiv.org/abs/{arxiv_id}");
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await?;
+pub async fn fetch_title_from_arxiv(cfg: &crate::net::HttpConfig, arxiv_id: &str) -> Result<Option<String>> {
+    let url = cfg.arxiv_abs_url(arxiv_id);
+    let response = cfg.get_with_retry(&url).await?;
 
     let html = response.text().await?;
 

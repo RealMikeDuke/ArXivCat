@@ -33,6 +33,7 @@ where
 }
 
 pub async fn stream_chat<F1, F2, F3>(
+    cfg: &crate::net::HttpConfig,
     messages: &[serde_json::Value],
     model: &str,
     reasoning_effort: &str,
@@ -61,9 +62,9 @@ where
         body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
     }
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post("https://api.deepseek.com/chat/completions")
+    let response = cfg
+        .client
+        .post(cfg.deepseek_chat_url())
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&body)
@@ -165,7 +166,7 @@ where
     Ok(())
 }
 
-pub async fn generate_title(messages: &[serde_json::Value]) -> Result<String> {
+pub async fn generate_title(cfg: &crate::net::HttpConfig, messages: &[serde_json::Value]) -> Result<String> {
     let api_key = config::load_cached_token().ok_or_else(|| {
         ArxivError::Config("no DeepSeek API key configured".into())
     })?;
@@ -183,9 +184,9 @@ pub async fn generate_title(messages: &[serde_json::Value]) -> Result<String> {
         "content": "Generate a short title for this conversation in the same language as the conversation. Output only the title."
     }));
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post("https://api.deepseek.com/chat/completions")
+    let response = cfg
+        .client
+        .post(cfg.deepseek_chat_url())
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&body)

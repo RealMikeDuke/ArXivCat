@@ -33,7 +33,11 @@ pub async fn cmd_scan(cli: &Cli) {
         }
     };
 
-    match arxivcat_core::workspace::scan_workspace_pdfs(&mut ws).await {
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
+    match arxivcat_core::workspace::scan_workspace_pdfs(&http, &mut ws).await {
         Ok(count) => {
             if cli.json {
                 println!("{}", serde_json::json!({"scanned": count}));

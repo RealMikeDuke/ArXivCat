@@ -14,12 +14,13 @@ pub struct ExtractionOutput {
 }
 
 pub async fn extract_paper(
+    cfg: &crate::net::HttpConfig,
     arxiv_id: &str,
     downloads_dir: &Path,
     output_dir: &Path,
 ) -> Result<ExtractionOutput> {
     let (paper_dir, _folder_name) =
-        source::download_source(arxiv_id, downloads_dir).await?;
+        source::download_source(cfg, arxiv_id, downloads_dir).await?;
 
     let paper_dir = paper_dir.ok_or_else(|| {
         crate::error::ArxivError::Extraction("source download returned None".into())
