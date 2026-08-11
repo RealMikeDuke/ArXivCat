@@ -113,9 +113,9 @@ pub async fn fetch_titles_batch(
 /// Exposed for unit tests.
 pub fn parse_atom_entries(xml: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let entry_re = Regex::new(r"<entry>.*?</entry>").unwrap();
-    let id_re = Regex::new(r"<id>.*?/abs/(\d{4}\.\d{4,5}(?:v\d+)?)</id>").unwrap();
-    let title_re = Regex::new(r"<title>(.*?)</title>").unwrap();
+    let entry_re = Regex::new(r"(?s)<entry>.*?</entry>").unwrap();
+    let id_re = Regex::new(r"(?s)<id>.*?/abs/(\d{4}\.\d{4,5}(?:v\d+)?)</id>").unwrap();
+    let title_re = Regex::new(r"(?s)<title>(.*?)</title>").unwrap();
     for entry in entry_re.find_iter(xml) {
         let block = entry.as_str();
         let id = id_re.captures(block).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
