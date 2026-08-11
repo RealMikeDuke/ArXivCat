@@ -27,6 +27,29 @@ impl Paper {
             return None;
         }
 
+        // Canonical: paper.json manifest is the single source of truth.
+        if let Ok(Some(m)) = crate::manifest::PaperManifest::load(folder) {
+            let has_body = m
+                .files
+                .body
+                .as_deref()
+                .map(|f| folder.join(f).is_file())
+                .unwrap_or(false);
+            let description_ready =
+                m.description_ready && has_complete_description(folder);
+            return Some(Paper {
+                arxiv_id: m.arxiv_id,
+                title: m.title,
+                folder_name,
+                folder: folder.to_path_buf(),
+                has_body,
+                description_ready,
+                is_complete: has_body,
+            });
+        }
+
+        // Legacy read-only fallback: parse {id1}_{id2}_..._{title} (or ID-only
+        // {id1}_{id2} with empty title). P1.2 makes the ID-only form canonical.
         let parts: Vec<&str> = folder_name.split('_').collect();
         if parts.len() < 2 {
             return None;
@@ -180,6 +203,10 @@ pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut W
                     let _desc = std::fs::File::create(folder.join("description.md"));
                     std::fs::create_dir_all(folder.join("arxiv_chats"))?;
 
+                    // Lazy migration (P1.1): write the manifest immediately so
+                    // the folder is canonical on next open.
+                    let _ = crate::manifest::refresh_manifest(&folder, &base_id, &title);
+
                     existing_ids.insert(base_id);
                     count += 1;
                 }
@@ -230,6 +257,11 @@ pub async fn process_pending_paper(
     let _ = download_pdf(cfg, arxiv_id, &out_dir).await;
 
     ensure_paper_meta_files(&out_dir)?;
+
+    // Manifest is the single source of truth (P1.1): refresh it now so the
+    // folder is migrated and inventory/cooldown state is durable.
+    crate::manifest::refresh_manifest(&out_dir, arxiv_id, &paper.title)?;
+    crate::manifest::clear_cooldown(&out_dir)?;
 
     Ok(out_dir.join("body.tex").exists())
 }
