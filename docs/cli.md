@@ -291,6 +291,4 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 
 ## See Also
 
-- [guidebook.md](./guidebook.md) — Full developer documentation (architecture, GUI, chat system, test coverage)
-- [conventions.md](./conventions.md) — Frontend component conventions
-- [CHANGELOG.md](../CHANGELOG.md) — Version history
+- [final-plan-v2.md](./final-plan-v2.md) — CLI projectization plan (expert-reviewed, 2026-08)
