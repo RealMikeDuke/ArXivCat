@@ -11,15 +11,46 @@ pub async fn download_source(
 ) -> Result<(Option<PathBuf>, Option<String>)> {
     std::fs::create_dir_all(downloads_dir)?;
 
-    let title = fetch_title_from_arxiv(cfg, arxiv_id).await?.unwrap_or_else(|| "unknown".to_string());
-    let folder_name = format!(
-        "{}_{}",
-        arxiv_id.replace('.', "_"),
-        sanitize_filename(&title)
-    );
+    let id_dir_name = arxiv_id.replace('.', "_");
+
+    // Cache-first: the ID-only folder (P1 canonical form) must hit without
+    // any network request at all.
+    let id_dir = downloads_dir.join(&id_dir_name);
+    if id_dir.exists() {
+        if validate_cache(&id_dir)? {
+            return Ok((Some(id_dir), Some(id_dir_name)));
+        }
+        repair_permissions(&id_dir)?;
+        if validate_cache(&id_dir)? {
+            return Ok((Some(id_dir), Some(id_dir_name)));
+        }
+        match std::fs::remove_dir_all(&id_dir) {
+            Ok(_) => {}
+            Err(_) => {
+                return Err(ArxivError::Other(format!(
+                    "cache directory {} exists but cannot be removed; please delete it manually",
+                    id_dir.display()
+                )));
+            }
+        }
+    }
+
+    // Title is best-effort only — a failed title fetch must never block the
+    // download (P0.7). Fallback folder name is ID-only (no "unknown").
+    let title = fetch_title_from_arxiv(cfg, arxiv_id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_default();
+
+    let folder_name = if title.is_empty() {
+        id_dir_name.clone()
+    } else {
+        format!("{}_{}", id_dir_name, sanitize_filename(&title))
+    };
 
     let paper_dir = downloads_dir.join(&folder_name);
 
+    // A legacy {id}_{title} cache dir for the same paper may already exist.
     if paper_dir.exists() {
         if validate_cache(&paper_dir)? {
             return Ok((Some(paper_dir), Some(folder_name)));
@@ -31,7 +62,10 @@ pub async fn download_source(
         match std::fs::remove_dir_all(&paper_dir) {
             Ok(_) => {}
             Err(_) => {
-                return Ok((None, Some(fresh_folder_name(downloads_dir, &folder_name)?)));
+                return Err(ArxivError::Other(format!(
+                    "cache directory {} exists but cannot be removed; please delete it manually",
+                    paper_dir.display()
+                )));
             }
         }
     }
@@ -63,12 +97,10 @@ pub async fn download_source(
 
     match move_to_target(temp_dir.path(), &paper_dir) {
         Ok(()) => Ok((Some(paper_dir), Some(folder_name))),
-        Err(_) => {
-            let fresh_name = fresh_folder_name(downloads_dir, &folder_name)?;
-            let fresh_dir = downloads_dir.join(&fresh_name);
-            move_to_target(temp_dir.path(), &fresh_dir)?;
-            Ok((Some(fresh_dir), Some(fresh_name)))
-        }
+        Err(e) => Err(ArxivError::Other(format!(
+            "failed to move extracted source into {}: {e}; check permissions and free disk space",
+            paper_dir.display()
+        ))),
     }
 }
 

@@ -3,7 +3,10 @@ use regex::Regex;
 use crate::error::{ArxivError, Result};
 
 pub fn extract_arxiv_id(input: &str) -> Option<String> {
-    let re = Regex::new(r"(\d+[._]\d+(?:v\d+)?)").ok()?;
+    // New-style arXiv IDs only: YYMM.NNNNN (4+4/5 digits). Tightened from the
+    // loose \d+[._]\d+ which mis-matched DOIs (10.48550) and dates. Old-style
+    // IDs (hep-th/9901001) are intentionally unsupported (documented).
+    let re = Regex::new(r"(\d{4}[._]\d{4,5}(?:v\d+)?)").ok()?;
     re.captures(input)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().replace('_', "."))
@@ -148,6 +151,24 @@ mod tests {
     #[test]
     fn test_extract_arxiv_id_invalid_returns_none() {
         assert_eq!(extract_arxiv_id("hello world"), None);
+    }
+
+    #[test]
+    fn test_extract_arxiv_id_rejects_doi_prefix() {
+        // Regression (P0.7): loose regex matched the DOI part ("10.48550").
+        // The tightened regex must still find the embedded arXiv ID.
+        assert_eq!(
+            extract_arxiv_id("https://doi.org/10.48550/arXiv.2501.12948"),
+            Some("2501.12948".to_string())
+        );
+        // A bare DOI-looking string with a short prefix must NOT match.
+        assert_eq!(extract_arxiv_id("10.48550/arXiv"), None);
+    }
+
+    #[test]
+    fn test_extract_arxiv_id_rejects_old_style() {
+        // Old-style IDs (hep-th/9901001) are documented as unsupported.
+        assert_eq!(extract_arxiv_id("hep-th/9901001"), None);
     }
 
     #[test]
