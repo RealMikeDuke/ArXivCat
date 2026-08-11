@@ -54,6 +54,14 @@ pub fn find_main_tex(paper_dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().next().map(|(_, path)| path)
 }
 
+/// Read a file as UTF-8 lossy — non-UTF8 (e.g. latin-1) legacy papers must
+/// not abort the whole extraction.
+pub fn read_to_string_lossy(path: &Path) -> String {
+    std::fs::read(path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .unwrap_or_default()
+}
+
 pub fn strip_latex_comments(tex_content: &str) -> String {
     let mut result = String::with_capacity(tex_content.len());
     let chars = tex_content.char_indices().peekable();
@@ -272,19 +280,29 @@ pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<Extr
         ))
     })?;
 
-    let content = std::fs::read_to_string(&main_tex)
-        .map_err(ArxivError::Io)?;
+    let content = read_to_string_lossy(&main_tex);
 
     let expanded = expand_inputs(&content, paper_dir, None, None)?;
 
-    let leftover_re = Regex::new(r"\\(?:input|include)\s*\{").unwrap();
-    if leftover_re.is_match(&expanded) {
-        return Err(ArxivError::Extraction(
-            "unresolved \\input/\\include references remain after expansion".into(),
-        ));
-    }
-
     let (body, appendix) = extract_body_and_appendix(&expanded)?;
+
+    let mut warnings = Vec::new();
+
+    // Unresolved braced \input/\include: downgrade to a warning + marker
+    // instead of failing the whole paper. \subfile / \import / space-form
+    // \input are silently dropped today — detect and flag them too.
+    let leftover_re = Regex::new(r"\\(?:input|include)\s*\{").unwrap();
+    let silent_re = Regex::new(r"\\(?:subfile|import)\b|\\input\s+[^\{]").unwrap();
+    let mut marked_body = body.clone();
+    if leftover_re.is_match(&marked_body) {
+        warnings.push("unresolved \\input/\\include references remain after expansion".into());
+        marked_body = format!("% [arxivcat] unexpanded \\input/\\include present\n{marked_body}");
+    }
+    if silent_re.is_match(&marked_body) {
+        warnings.push("\\subfile/\\import or space-form \\input detected (not expanded); content may be missing".into());
+        marked_body = format!("% [arxivcat] unexpanded \\subfile/\\import present\n{marked_body}");
+    }
+    let body = marked_body;
 
     std::fs::create_dir_all(output_dir)?;
 
@@ -305,6 +323,7 @@ pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<Extr
         body_path,
         appendix_path,
         pdf_path: None,
+        warnings,
     })
 }
 

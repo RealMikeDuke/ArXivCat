@@ -107,6 +107,10 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
             }
         };
 
+    for w in &output.warnings {
+        eprintln!("warning: {w}");
+    }
+
     let _ = arxivcat_core::extract::source::download_pdf(&http, &arxiv_id, &output_dir).await;
 
     if let Err(e) = arxivcat_core::workspace::ensure_paper_meta_files(&output_dir) {

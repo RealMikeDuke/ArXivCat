@@ -337,6 +337,59 @@ We conclude.";
         assert!(!ctx.contains("appendix"));
     }
 
+    // ─── P0.8: lossy reads + unexpanded-reference warnings ───
+
+    #[test]
+    fn extract_body_from_dir_non_utf8_lossy() {
+        use arxivcat_core::extract::tex::extract_body_from_dir;
+        let dir = tempfile::tempdir().unwrap();
+        // latin-1 content (0xE9 = é in latin-1, invalid UTF-8 alone)
+        let bytes = br"\documentclass{article}\n\begin{document}\nCaf\xe9 test\n\end{document}";
+        std::fs::write(dir.path().join("main.tex"), bytes).unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let out = extract_body_from_dir(dir.path(), out_dir.path()).unwrap();
+        assert!(out.body.contains("Caf"));
+        assert!(out.warnings.is_empty());
+    }
+
+    #[test]
+    fn extract_body_from_dir_unexpanded_input_warns_not_fails() {
+        use arxivcat_core::extract::tex::extract_body_from_dir;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\input{missing}\n\\end{document}",
+        )
+        .unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let out = extract_body_from_dir(dir.path(), out_dir.path()).unwrap();
+        assert!(
+            out.warnings.iter().any(|w| w.contains("unresolved")),
+            "expected unresolved-input warning, got {out:?}"
+        );
+        assert!(out.body.starts_with("% [arxivcat] unexpanded"));
+    }
+
+    #[test]
+    fn extract_body_from_dir_subfile_warns() {
+        use arxivcat_core::extract::tex::extract_body_from_dir;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\subfile{chapters/intro}\n\\end{document}",
+        )
+        .unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let out = extract_body_from_dir(dir.path(), out_dir.path()).unwrap();
+        assert!(
+            out.warnings.iter().any(|w| w.contains("subfile")),
+            "expected subfile warning, got {out:?}"
+        );
+    }
+
     #[test]
     fn side_chat_context_empty_returns_placeholder() {
         let dir = tempfile::tempdir().unwrap();

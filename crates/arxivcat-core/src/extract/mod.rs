@@ -5,12 +5,15 @@ pub mod tex;
 use crate::error::Result;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct ExtractionOutput {
     pub body: String,
     pub appendix: Option<String>,
     pub body_path: PathBuf,
     pub appendix_path: Option<PathBuf>,
     pub pdf_path: Option<PathBuf>,
+    /// Non-fatal extraction warnings (unexpanded references, encoding, etc.).
+    pub warnings: Vec<String>,
 }
 
 pub async fn extract_paper(
