@@ -258,16 +258,6 @@ fn move_to_target(source: &Path, target: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn fresh_folder_name(base_dir: &Path, original: &str) -> Result<String> {
-    for n in 1..100 {
-        let candidate = format!("{original}_fresh{n}");
-        if !base_dir.join(&candidate).exists() {
-            return Ok(candidate);
-        }
-    }
-    Err(ArxivError::Other("cannot find fresh folder name".into()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,15 +272,6 @@ mod tests {
 
         std::fs::write(dir.path().join("paper.tex"), "\\documentclass{article}").unwrap();
         assert!(validate_cache(dir.path()).unwrap());
-    }
-
-    #[test]
-    fn test_fresh_folder_name_increments() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = "test_folder";
-        std::fs::create_dir(dir.path().join("test_folder_fresh1")).unwrap();
-        let name = fresh_folder_name(dir.path(), base).unwrap();
-        assert_eq!(name, "test_folder_fresh2");
     }
 
     fn make_tar_with_file(name: &str, content: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
