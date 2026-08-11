@@ -10,7 +10,7 @@ use crate::Cli;
 
 // ─── Error contract (P0.4, frozen at P0 gate — do not renumber) ───
 // 0 success | 1 other | 2 usage | 3 network | 4 config | 5 data | 6 io | 7 chat | 8 partial | 130 SIGINT
-pub const EXIT_OK: i32 = 0;
+pub const EXIT_OK: i32 = 0; // success; implicit in command completion
 pub const EXIT_OTHER: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_NETWORK: i32 = 3;
@@ -18,6 +18,7 @@ pub const EXIT_CONFIG: i32 = 4;
 pub const EXIT_DATA: i32 = 5;
 pub const EXIT_IO: i32 = 6;
 pub const EXIT_CHAT: i32 = 7;
+#[allow(dead_code)] // reserved: download-all partial aggregation lands in P1.4
 pub const EXIT_PARTIAL: i32 = 8;
 
 pub fn exit_code_for(err: &ArxivError) -> i32 {
