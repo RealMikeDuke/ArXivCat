@@ -381,7 +381,7 @@ pub async fn cmd_pdf(cli: &Cli, id_or_query: &str) {
 
     let glob_pattern = format!("{}/*.pdf", paper.folder.display());
     if let Ok(entries) = glob::glob(&glob_pattern) {
-        for entry in entries.flatten() {
+        if let Some(entry) = entries.flatten().next() {
             let _ = open::that(&entry);
             return;
         }

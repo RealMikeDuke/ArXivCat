@@ -68,8 +68,12 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
         }
 
         if line.starts_with('/') {
-            let parts: Vec<&str> = line[1..].split_whitespace().collect();
-            match parts.get(0).copied().unwrap_or("") {
+            let parts: Vec<&str> = line
+                .strip_prefix('/')
+                .unwrap_or("")
+                .split_whitespace()
+                .collect();
+            match parts.first().copied().unwrap_or("") {
                 "quit" | "exit" | "q" => break,
                 "model" => {
                     if let Some(m) = parts.get(1) {
@@ -313,8 +317,12 @@ pub async fn cmd_global(cli: &Cli) {
         }
 
         if line.starts_with('/') {
-            let parts: Vec<&str> = line[1..].split_whitespace().collect();
-            match parts.get(0).copied().unwrap_or("") {
+            let parts: Vec<&str> = line
+                .strip_prefix('/')
+                .unwrap_or("")
+                .split_whitespace()
+                .collect();
+            match parts.first().copied().unwrap_or("") {
                 "quit" | "exit" | "q" => break,
                 "model" => {
                     if let Some(m) = parts.get(1) {

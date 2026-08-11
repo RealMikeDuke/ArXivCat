@@ -41,7 +41,7 @@ pub async fn download_source(
         .timeout(std::time::Duration::from_secs(120))
         .send()
         .await
-        .map_err(|e| ArxivError::Http(e))?;
+        .map_err(ArxivError::Http)?;
 
     if !response.status().is_success() {
         return Err(ArxivError::Other(format!(
@@ -54,7 +54,7 @@ pub async fn download_source(
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| ArxivError::Http(e))?;
+        .map_err(ArxivError::Http)?;
     std::fs::write(&tar_path, &bytes)?;
 
     let temp_dir = tempfile::Builder::new()
@@ -89,7 +89,7 @@ pub async fn download_pdf(arxiv_id: &str, output_dir: &Path) -> Result<Option<Pa
         .timeout(std::time::Duration::from_secs(120))
         .send()
         .await
-        .map_err(|e| ArxivError::Http(e))?;
+        .map_err(ArxivError::Http)?;
 
     if !response.status().is_success() {
         return Ok(None);
@@ -98,7 +98,7 @@ pub async fn download_pdf(arxiv_id: &str, output_dir: &Path) -> Result<Option<Pa
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| ArxivError::Http(e))?;
+        .map_err(ArxivError::Http)?;
 
     std::fs::create_dir_all(output_dir)?;
     std::fs::write(&pdf_path, &bytes)?;
@@ -217,19 +217,19 @@ fn is_safe_tar_member<R: std::io::Read>(member: &tar::Entry<'_, R>, target_dir: 
 
 fn extract_tar(tar_path: &Path, target_dir: &Path) -> Result<()> {
     let file =
-        std::fs::File::open(tar_path).map_err(|e| ArxivError::Io(e))?;
+        std::fs::File::open(tar_path).map_err(ArxivError::Io)?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
 
-    let entries = archive.entries().map_err(|e| ArxivError::Io(e))?;
+    let entries = archive.entries().map_err(ArxivError::Io)?;
     for entry in entries {
-        let mut entry = entry.map_err(|e| ArxivError::Io(e))?;
+        let mut entry = entry.map_err(ArxivError::Io)?;
         if !is_safe_tar_member(&entry, target_dir) {
             continue;
         }
         entry
             .unpack_in(target_dir)
-            .map_err(|e| ArxivError::Io(e))?;
+            .map_err(ArxivError::Io)?;
     }
 
     Ok(())

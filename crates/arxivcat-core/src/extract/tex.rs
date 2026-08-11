@@ -26,10 +26,10 @@ pub fn find_main_tex(paper_dir: &Path) -> Option<PathBuf> {
 
 pub fn strip_latex_comments(tex_content: &str) -> String {
     let mut result = String::with_capacity(tex_content.len());
-    let mut chars = tex_content.char_indices().peekable();
+    let chars = tex_content.char_indices().peekable();
     let mut skip_to_eol = false;
 
-    while let Some((i, ch)) = chars.next() {
+    for (i, ch) in chars {
         if skip_to_eol {
             if ch == '\n' {
                 skip_to_eol = false;
@@ -243,7 +243,7 @@ pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<Extr
     })?;
 
     let content = std::fs::read_to_string(&main_tex)
-        .map_err(|e| ArxivError::Io(e))?;
+        .map_err(ArxivError::Io)?;
 
     let expanded = expand_inputs(&content, paper_dir, None, None)?;
 

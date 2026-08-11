@@ -108,7 +108,7 @@ impl Workspace {
     }
 
     pub fn find_paper_by_id(&self, arxiv_id: &str) -> Option<&Paper> {
-        let normalized = arxiv_id.replace('.', "_").replace('-', "_").to_lowercase();
+        let normalized = arxiv_id.replace(['.', '-'], "_").to_lowercase();
         self.papers.iter().find(|p| {
             let fid = p
                 .folder_name
@@ -129,15 +129,11 @@ impl Workspace {
 }
 
 pub async fn scan_workspace_pdfs(workspace: &mut Workspace) -> Result<usize> {
+    let v_suffix_re = regex::Regex::new(r"v\d+$").unwrap();
     let mut existing_ids: HashSet<String> = workspace
         .papers
         .iter()
-        .map(|p| {
-            regex::Regex::new(r"v\d+$")
-                .unwrap()
-                .replace(&p.arxiv_id, "")
-                .to_string()
-        })
+        .map(|p| v_suffix_re.replace(&p.arxiv_id, "").to_string())
         .collect();
 
     let mut count = 0;
@@ -150,8 +146,7 @@ pub async fn scan_workspace_pdfs(workspace: &mut Workspace) -> Result<usize> {
             let path = entry.path();
             if path.extension().map(|e| e == "pdf").unwrap_or(false) {
                 if let Ok(Some(id)) = extract_arxiv_id_from_pdf(&path) {
-                    let base_id =
-                        regex::Regex::new(r"v\d+$").unwrap().replace(&id, "").to_string();
+                    let base_id = v_suffix_re.replace(&id, "").to_string();
                     if existing_ids.contains(&base_id) {
                         continue;
                     }

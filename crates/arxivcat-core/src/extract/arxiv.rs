@@ -10,7 +10,7 @@ pub fn extract_arxiv_id(input: &str) -> Option<String> {
 }
 
 pub fn extract_arxiv_id_from_pdf(pdf_path: &std::path::Path) -> Result<Option<String>> {
-    let bytes = std::fs::read(pdf_path).map_err(|e| ArxivError::Io(e))?;
+    let bytes = std::fs::read(pdf_path).map_err(ArxivError::Io)?;
 
     let doc = lopdf::Document::load_mem(&bytes)
         .map_err(|e| ArxivError::Parse(format!("failed to parse PDF: {e}")))?;

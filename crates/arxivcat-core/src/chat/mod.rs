@@ -13,7 +13,7 @@ pub struct ChatContext {
     pub note: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ContextSelection {
     #[serde(default)]
     pub body: bool,
@@ -23,17 +23,6 @@ pub struct ContextSelection {
     pub description: bool,
     #[serde(default)]
     pub note: bool,
-}
-
-impl Default for ContextSelection {
-    fn default() -> Self {
-        Self {
-            body: false,
-            appendix: false,
-            description: false,
-            note: false,
-        }
-    }
 }
 
 pub fn build_side_chat_context(paper_dir: &Path, selection: &ContextSelection) -> String {
