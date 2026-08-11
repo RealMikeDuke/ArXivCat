@@ -39,7 +39,11 @@ impl ChatSession {
         } else {
             format!(
                 "{} {}",
-                if arxiv_id.is_empty() { "Paper" } else { arxiv_id },
+                if arxiv_id.is_empty() {
+                    "Paper"
+                } else {
+                    arxiv_id
+                },
                 now.format("%Y-%m-%d %H:%M")
             )
         };

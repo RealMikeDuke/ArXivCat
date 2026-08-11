@@ -127,7 +127,10 @@ mod tests {
 
         let papers = vec![make_paper("2501.12948", "Test", paper_dir)];
         let sel = ContextSelection {
-            body: false, appendix: false, description: false, note: false,
+            body: false,
+            appendix: false,
+            description: false,
+            note: false,
         };
         let ctx = build_global_chat_context(&papers, &sel);
         assert!(ctx.contains("no context selected"));
@@ -142,7 +145,10 @@ mod tests {
 
         let papers = vec![make_paper("2501.12948", "Test", paper_dir)];
         let sel = ContextSelection {
-            body: true, appendix: false, description: false, note: false,
+            body: true,
+            appendix: false,
+            description: false,
+            note: false,
         };
         let ctx = build_global_chat_context(&papers, &sel);
         assert!(ctx.contains("some body"));
@@ -165,7 +171,10 @@ mod tests {
             make_paper("2412.04445", "B", p2),
         ];
         let sel = ContextSelection {
-            body: true, appendix: false, description: false, note: false,
+            body: true,
+            appendix: false,
+            description: false,
+            note: false,
         };
         let ctx = build_global_chat_context(&papers, &sel);
         assert!(!ctx.contains("desc A"));
@@ -182,7 +191,10 @@ mod tests {
 
         let papers = vec![make_paper("2501.12948", "Test", paper_dir)];
         let sel = ContextSelection {
-            body: true, appendix: false, description: false, note: true,
+            body: true,
+            appendix: false,
+            description: false,
+            note: true,
         };
         let ctx = build_global_chat_context(&papers, &sel);
         assert!(ctx.contains("body text"));

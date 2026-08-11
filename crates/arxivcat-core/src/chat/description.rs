@@ -13,9 +13,8 @@ pub async fn build_description(
     log_cb: Option<&(dyn Fn(&str) + Sync)>,
     context_override: Option<&str>,
 ) -> Result<()> {
-    let api_key = config::load_cached_token().ok_or_else(|| {
-        ArxivError::Config("no DeepSeek API key configured".into())
-    })?;
+    let api_key = config::load_cached_token()
+        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
 
     let desc_path = paper_dir.join("description.md");
     let flag_path = paper_dir.join(".description_ready");
@@ -42,9 +41,8 @@ pub async fn build_description(
         return Err(ArxivError::Extraction("paper text is empty".into()));
     }
 
-    let user_msg = format!(
-        "arXiv ID: {arxiv_id}\nTitle: {title}\n\nPaper text snippet:\n{context}"
-    );
+    let user_msg =
+        format!("arXiv ID: {arxiv_id}\nTitle: {title}\n\nPaper text snippet:\n{context}");
 
     // Reuse the configured model preference (Flash/Pro) instead of a
     // hardcoded model (P0.14): user's chat_model choice applies to describe.
@@ -73,12 +71,15 @@ pub async fn build_description(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(ArxivError::Chat(format!("description API error {status}: {text}")));
+        return Err(ArxivError::Chat(format!(
+            "description API error {status}: {text}"
+        )));
     }
 
-    let json: serde_json::Value = response.json().await.map_err(|e| {
-        ArxivError::Chat(format!("failed to parse description response: {e}"))
-    })?;
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| ArxivError::Chat(format!("failed to parse description response: {e}")))?;
 
     let description = json["choices"][0]["message"]["content"]
         .as_str()
@@ -94,7 +95,10 @@ pub async fn build_description(
     std::fs::write(&flag_path, "ok\n")?;
 
     if let Some(cb) = log_cb {
-        cb(&format!("description generated for {arxiv_id} ({})", desc_path.display()));
+        cb(&format!(
+            "description generated for {arxiv_id} ({})",
+            desc_path.display()
+        ));
     }
 
     Ok(())

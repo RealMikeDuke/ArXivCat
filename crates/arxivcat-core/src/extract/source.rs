@@ -138,10 +138,7 @@ pub async fn download_source(
             .unwrap_or(0)
     );
     let tar_path = tar_dir.join(unique);
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(ArxivError::Http)?;
+    let bytes = response.bytes().await.map_err(ArxivError::Http)?;
     std::fs::write(&tar_path, &bytes)?;
 
     let temp_dir = tempfile::Builder::new()
@@ -161,7 +158,11 @@ pub async fn download_source(
     }
 }
 
-pub async fn download_pdf(cfg: &HttpConfig, arxiv_id: &str, output_dir: &Path) -> Result<Option<PathBuf>> {
+pub async fn download_pdf(
+    cfg: &HttpConfig,
+    arxiv_id: &str,
+    output_dir: &Path,
+) -> Result<Option<PathBuf>> {
     let pdf_path = output_dir.join(format!("{arxiv_id}.pdf"));
     if pdf_path.exists() {
         return Ok(Some(pdf_path));
@@ -174,10 +175,7 @@ pub async fn download_pdf(cfg: &HttpConfig, arxiv_id: &str, output_dir: &Path) -
         return Ok(None);
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(ArxivError::Http)?;
+    let bytes = response.bytes().await.map_err(ArxivError::Http)?;
 
     std::fs::create_dir_all(output_dir)?;
     std::fs::write(&pdf_path, &bytes)?;
@@ -293,8 +291,7 @@ fn is_safe_tar_member<R: std::io::Read>(member: &tar::Entry<'_, R>, target_dir: 
 }
 
 fn extract_tar(tar_path: &Path, target_dir: &Path) -> Result<()> {
-    let file =
-        std::fs::File::open(tar_path).map_err(ArxivError::Io)?;
+    let file = std::fs::File::open(tar_path).map_err(ArxivError::Io)?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
 
@@ -304,9 +301,7 @@ fn extract_tar(tar_path: &Path, target_dir: &Path) -> Result<()> {
         if !is_safe_tar_member(&entry, target_dir) {
             continue;
         }
-        entry
-            .unpack_in(target_dir)
-            .map_err(ArxivError::Io)?;
+        entry.unpack_in(target_dir).map_err(ArxivError::Io)?;
     }
 
     force_uniform_permissions(target_dir)?;
@@ -364,7 +359,11 @@ mod tests {
         header.set_mode(0o777);
         header.set_cksum();
         builder
-            .append_link(&mut header, "evil_link", "/tmp/arxivcat_outside_target_marker")
+            .append_link(
+                &mut header,
+                "evil_link",
+                "/tmp/arxivcat_outside_target_marker",
+            )
             .unwrap();
         builder.into_inner().unwrap().finish().unwrap();
 
@@ -426,7 +425,10 @@ mod tests {
         (dir, tgz)
     }
 
-    fn with_first_entry<R>(tgz: &Path, f: impl FnOnce(&tar::Entry<'_, flate2::read::GzDecoder<std::fs::File>>) -> R) -> R {
+    fn with_first_entry<R>(
+        tgz: &Path,
+        f: impl FnOnce(&tar::Entry<'_, flate2::read::GzDecoder<std::fs::File>>) -> R,
+    ) -> R {
         let file = std::fs::File::open(tgz).unwrap();
         let decoder = flate2::read::GzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
@@ -438,9 +440,7 @@ mod tests {
     fn test_is_safe_tar_member_accepts_regular_file() {
         let (_dir, tgz) = make_tar_with_file("main.tex", b"\\documentclass{article}");
         let target = tempfile::tempdir().unwrap();
-        let result = with_first_entry(&tgz, |entry| {
-            is_safe_tar_member(entry, target.path())
-        });
+        let result = with_first_entry(&tgz, |entry| is_safe_tar_member(entry, target.path()));
         assert!(result);
     }
 
@@ -448,9 +448,7 @@ mod tests {
     fn test_is_safe_tar_member_accepts_subdir_file() {
         let (_dir, tgz) = make_tar_with_file("sec/intro.tex", b"intro");
         let target = tempfile::tempdir().unwrap();
-        let result = with_first_entry(&tgz, |entry| {
-            is_safe_tar_member(entry, target.path())
-        });
+        let result = with_first_entry(&tgz, |entry| is_safe_tar_member(entry, target.path()));
         assert!(result);
     }
 

@@ -1,10 +1,8 @@
 use crate::config;
 use crate::error::{ArxivError, Result};
 
-pub const CHAT_MODELS: &[(&str, &str)] = &[
-    ("Flash", "deepseek-v4-flash"),
-    ("Pro", "deepseek-v4-pro"),
-];
+pub const CHAT_MODELS: &[(&str, &str)] =
+    &[("Flash", "deepseek-v4-flash"), ("Pro", "deepseek-v4-pro")];
 
 pub fn model_id(name: &str) -> Option<&'static str> {
     CHAT_MODELS
@@ -45,9 +43,8 @@ where
     F2: Fn(&str),
     F3: Fn(&str),
 {
-    let api_key = config::load_cached_token().ok_or_else(|| {
-        ArxivError::Config("no DeepSeek API key configured".into())
-    })?;
+    let api_key = config::load_cached_token()
+        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
 
     let model_id = model_id(model).unwrap_or("deepseek-v4-flash");
 
@@ -116,9 +113,7 @@ where
                         ttft = Some(start.elapsed());
                     }
 
-                    let collapsed = newline_collapse_re
-                        .replace_all(content, "\n")
-                        .to_string();
+                    let collapsed = newline_collapse_re.replace_all(content, "\n").to_string();
 
                     buffer.push_str(&collapsed);
                     (callbacks.on_token)(&collapsed, first_chunk);
@@ -142,12 +137,7 @@ where
             0.0
         };
 
-        let mut metrics = format!(
-            "{} | {:.0} tok/s | {} tokens",
-            model_id,
-            tps,
-            buffer.len()
-        );
+        let mut metrics = format!("{} | {:.0} tok/s | {} tokens", model_id, tps, buffer.len());
 
         if let Some(t) = ttft {
             metrics = format!(
@@ -166,10 +156,12 @@ where
     Ok(())
 }
 
-pub async fn generate_title(cfg: &crate::net::HttpConfig, messages: &[serde_json::Value]) -> Result<String> {
-    let api_key = config::load_cached_token().ok_or_else(|| {
-        ArxivError::Config("no DeepSeek API key configured".into())
-    })?;
+pub async fn generate_title(
+    cfg: &crate::net::HttpConfig,
+    messages: &[serde_json::Value],
+) -> Result<String> {
+    let api_key = config::load_cached_token()
+        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
 
     let mut body = serde_json::json!({
         "model": "deepseek-v4-flash",
@@ -197,12 +189,15 @@ pub async fn generate_title(cfg: &crate::net::HttpConfig, messages: &[serde_json
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(ArxivError::Chat(format!("title API error {status}: {text}")));
+        return Err(ArxivError::Chat(format!(
+            "title API error {status}: {text}"
+        )));
     }
 
-    let json: serde_json::Value = response.json().await.map_err(|e| {
-        ArxivError::Chat(format!("failed to parse title response: {e}"))
-    })?;
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| ArxivError::Chat(format!("failed to parse title response: {e}")))?;
 
     let title = json["choices"][0]["message"]["content"]
         .as_str()

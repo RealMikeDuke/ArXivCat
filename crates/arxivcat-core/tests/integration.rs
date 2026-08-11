@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod integration_tests {
+    use arxivcat_core::chat::*;
+    use arxivcat_core::config::*;
     use arxivcat_core::extract::arxiv::*;
     use arxivcat_core::extract::tex::*;
     use arxivcat_core::workspace::*;
-    use arxivcat_core::chat::*;
-    use arxivcat_core::config::*;
     use std::path::Path;
 
     // ─── arXiv ID Parsing Edge Cases ───
@@ -15,9 +15,15 @@ mod integration_tests {
             extract_arxiv_id("arxiv.org/abs/2501.12948"),
             Some("2501.12948".into())
         );
-        assert_eq!(extract_arxiv_id("arXiv:2501.12948"), Some("2501.12948".into()));
+        assert_eq!(
+            extract_arxiv_id("arXiv:2501.12948"),
+            Some("2501.12948".into())
+        );
         assert_eq!(extract_arxiv_id("2501_12948"), Some("2501.12948".into()));
-        assert_eq!(extract_arxiv_id("2501.12948v3"), Some("2501.12948v3".into()));
+        assert_eq!(
+            extract_arxiv_id("2501.12948v3"),
+            Some("2501.12948v3".into())
+        );
         assert_eq!(extract_arxiv_id(" 2501.12948 "), Some("2501.12948".into()));
         assert_eq!(
             extract_arxiv_id("http://arxiv.org/abs/2501.12948"),
@@ -133,7 +139,11 @@ mod integration_tests {
         let intro = dir.path().join("sec").join("intro.tex");
         let bg = dir.path().join("sec").join("bg.tex");
 
-        std::fs::write(&main, "\\documentclass{article}\n\\input{sec/intro}\n\\end{document}").unwrap();
+        std::fs::write(
+            &main,
+            "\\documentclass{article}\n\\input{sec/intro}\n\\end{document}",
+        )
+        .unwrap();
         std::fs::write(&intro, "Introduction. \\input{bg}").unwrap();
         std::fs::write(&bg, "Background text.").unwrap();
 

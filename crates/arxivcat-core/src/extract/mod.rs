@@ -22,8 +22,7 @@ pub async fn extract_paper(
     downloads_dir: &Path,
     output_dir: &Path,
 ) -> Result<ExtractionOutput> {
-    let (paper_dir, _folder_name) =
-        source::download_source(cfg, arxiv_id, downloads_dir).await?;
+    let (paper_dir, _folder_name) = source::download_source(cfg, arxiv_id, downloads_dir).await?;
 
     let paper_dir = paper_dir.ok_or_else(|| {
         crate::error::ArxivError::Extraction("source download returned None".into())

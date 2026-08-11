@@ -98,10 +98,8 @@ impl HttpConfig {
                     attempt += 1;
                 }
                 Err(e) => {
-                    let retryable = e.is_timeout()
-                        || e.is_connect()
-                        || e.is_request()
-                        || e.is_body();
+                    let retryable =
+                        e.is_timeout() || e.is_connect() || e.is_request() || e.is_body();
                     if !retryable || attempt >= self.max_retries {
                         return Err(ArxivError::Http(e));
                     }

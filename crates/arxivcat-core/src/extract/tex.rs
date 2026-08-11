@@ -126,10 +126,7 @@ pub fn expand_inputs(
             }
 
             let candidates: Vec<PathBuf> = {
-                let mut v = vec![
-                    base_dir_owned.join(filename),
-                    root_dir_owned.join(filename),
-                ];
+                let mut v = vec![base_dir_owned.join(filename), root_dir_owned.join(filename)];
                 if !filename.ends_with(".tex") {
                     v.push(base_dir_owned.join(format!("{filename}.tex")));
                     v.push(root_dir_owned.join(format!("{filename}.tex")));
@@ -166,18 +163,16 @@ pub fn expand_inputs(
 }
 
 pub fn extract_body_and_appendix(tex_content: &str) -> Result<(String, Option<String>)> {
-    let abstract_re = Regex::new(r"\\begin\{abstract\}")
+    let abstract_re =
+        Regex::new(r"\\begin\{abstract\}").map_err(|e| ArxivError::Parse(e.to_string()))?;
+    let section_re =
+        Regex::new(r"\\section\s*[\*]?\s*\{").map_err(|e| ArxivError::Parse(e.to_string()))?;
+    let doc_begin_re =
+        Regex::new(r"\\begin\{document\}").map_err(|e| ArxivError::Parse(e.to_string()))?;
+    let doc_end_re =
+        Regex::new(r"\\end\{document\}").map_err(|e| ArxivError::Parse(e.to_string()))?;
+    let conclusion_re = Regex::new(r"\\section\*?\s*\{[^}]*?(?:[Cc]onclusion|[Ss]ummary)[^}]*\}")
         .map_err(|e| ArxivError::Parse(e.to_string()))?;
-    let section_re = Regex::new(r"\\section\s*[\*]?\s*\{")
-        .map_err(|e| ArxivError::Parse(e.to_string()))?;
-    let doc_begin_re = Regex::new(r"\\begin\{document\}")
-        .map_err(|e| ArxivError::Parse(e.to_string()))?;
-    let doc_end_re = Regex::new(r"\\end\{document\}")
-        .map_err(|e| ArxivError::Parse(e.to_string()))?;
-    let conclusion_re = Regex::new(
-        r"\\section\*?\s*\{[^}]*?(?:[Cc]onclusion|[Ss]ummary)[^}]*\}",
-    )
-    .map_err(|e| ArxivError::Parse(e.to_string()))?;
     let appendix_re = Regex::new(r"\\appendix(?:\s|$)|\\begin\{appendix\}")
         .map_err(|e| ArxivError::Parse(e.to_string()))?;
     let bibliography_re = Regex::new(r"\\bibliography(?:style)?\s*\{")
@@ -274,10 +269,7 @@ pub fn extract_body_and_appendix(tex_content: &str) -> Result<(String, Option<St
 
 pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<ExtractionOutput> {
     let main_tex = find_main_tex(paper_dir).ok_or_else(|| {
-        ArxivError::Extraction(format!(
-            "main tex not found in {}",
-            paper_dir.display()
-        ))
+        ArxivError::Extraction(format!("main tex not found in {}", paper_dir.display()))
     })?;
 
     let content = read_to_string_lossy(&main_tex);
@@ -350,16 +342,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("main.tex"), "\\documentclass{article}").unwrap();
         std::fs::write(dir.path().join("other.tex"), "\\documentclass{article}").unwrap();
-        assert_eq!(
-            find_main_tex(dir.path()),
-            Some(dir.path().join("main.tex"))
-        );
+        assert_eq!(find_main_tex(dir.path()), Some(dir.path().join("main.tex")));
     }
 
     #[test]
     fn test_find_main_tex_scans_for_documentclass() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("paper.tex"), "\\documentclass{article}\nHello").unwrap();
+        std::fs::write(
+            dir.path().join("paper.tex"),
+            "\\documentclass{article}\nHello",
+        )
+        .unwrap();
         assert_eq!(
             find_main_tex(dir.path()),
             Some(dir.path().join("paper.tex"))
@@ -379,7 +372,11 @@ mod tests {
         let main = dir.path().join("main.tex");
         let sub = dir.path().join("intro.tex");
 
-        std::fs::write(&main, "\\documentclass{article}\n\\input{intro}\n\\end{document}").unwrap();
+        std::fs::write(
+            &main,
+            "\\documentclass{article}\n\\input{intro}\n\\end{document}",
+        )
+        .unwrap();
         std::fs::write(&sub, "Introduction text here.").unwrap();
 
         let result = expand_inputs(

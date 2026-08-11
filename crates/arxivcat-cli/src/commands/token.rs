@@ -1,5 +1,5 @@
-use arxivcat_core::config;
 use crate::Cli;
+use arxivcat_core::config;
 
 pub async fn cmd_status(cli: &Cli) {
     let token = config::load_cached_token();
@@ -91,7 +91,12 @@ pub async fn cmd_set(_cli: &Cli) {
     }
     let token = token.trim().to_string();
     if token.is_empty() {
-        crate::commands::die(_cli, crate::commands::EXIT_USAGE, "usage", "token cannot be empty");
+        crate::commands::die(
+            _cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "token cannot be empty",
+        );
     }
 
     match config::save_token(&token) {
@@ -107,17 +112,32 @@ pub async fn cmd_validate(cli: &Cli) {
     let token = match token {
         Some(t) => t,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no token configured");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no token configured",
+            );
         }
     };
 
     match validate_token_inner(&token).await {
         Ok((true, elapsed_ms)) => println!("token is valid ({elapsed_ms}ms)"),
         Ok((false, _)) => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "token is invalid");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "token is invalid",
+            );
         }
         Err(e) => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", &format!("validation error: {e}"));
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                &format!("validation error: {e}"),
+            );
         }
     }
 }

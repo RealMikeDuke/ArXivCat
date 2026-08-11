@@ -21,9 +21,7 @@ impl Paper {
     pub fn from_folder(folder: &Path) -> Option<Self> {
         let folder_name = folder.file_name()?.to_string_lossy().to_string();
 
-        if folder_name.starts_with('.')
-            || WORKSPACE_INTERNAL_DIRS.contains(&folder_name.as_str())
-        {
+        if folder_name.starts_with('.') || WORKSPACE_INTERNAL_DIRS.contains(&folder_name.as_str()) {
             return None;
         }
 
@@ -35,8 +33,7 @@ impl Paper {
                 .as_deref()
                 .map(|f| folder.join(f).is_file())
                 .unwrap_or(false);
-            let description_ready =
-                m.description_ready && has_complete_description(folder);
+            let description_ready = m.description_ready && has_complete_description(folder);
             return Some(Paper {
                 arxiv_id: m.arxiv_id,
                 title: m.title,
@@ -173,7 +170,10 @@ impl Workspace {
     }
 }
 
-pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut Workspace) -> Result<usize> {
+pub async fn scan_workspace_pdfs(
+    cfg: &crate::net::HttpConfig,
+    workspace: &mut Workspace,
+) -> Result<usize> {
     let v_suffix_re = regex::Regex::new(r"v\d+$").unwrap();
     let mut existing_ids: HashSet<String> = workspace
         .papers

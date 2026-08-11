@@ -3,10 +3,10 @@ pub mod paper;
 pub mod token;
 pub mod workspace;
 
+use crate::Cli;
 use arxivcat_core::config;
 use arxivcat_core::error::ArxivError;
 use arxivcat_core::workspace::Workspace;
-use crate::Cli;
 
 // ─── Error contract (P0.4, frozen at P0 gate — do not renumber) ───
 // 0 success | 1 other | 2 usage | 3 network | 4 config | 5 data | 6 io | 7 chat | 8 partial | 130 SIGINT
@@ -121,7 +121,11 @@ pub fn find_papers(workspace: &Workspace, query: &str) -> Vec<arxivcat_core::wor
 
 /// Resolve a paper, dying with a clear error on not-found or ambiguity.
 /// Silent wrong-paper selection (P0.14) is never allowed.
-pub fn find_paper_or_die(cli: &Cli, workspace: &Workspace, query: &str) -> arxivcat_core::workspace::Paper {
+pub fn find_paper_or_die(
+    cli: &Cli,
+    workspace: &Workspace,
+    query: &str,
+) -> arxivcat_core::workspace::Paper {
     let matches = find_papers(workspace, query);
     match matches.len() {
         0 => die(
@@ -154,7 +158,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paper_dir = dir.path().join("2501_12948_Test_Paper");
         std::fs::create_dir_all(&paper_dir).unwrap();
-        std::fs::write(paper_dir.join("body.tex"), r"\documentclass{article}\begin{document}test\end{document}").unwrap();
+        std::fs::write(
+            paper_dir.join("body.tex"),
+            r"\documentclass{article}\begin{document}test\end{document}",
+        )
+        .unwrap();
         std::fs::write(paper_dir.join("note.txt"), "").unwrap();
         arxivcat_core::workspace::Workspace::open(dir.path()).unwrap()
     }
@@ -214,7 +222,9 @@ mod tests {
         crate::Cli {
             workspace,
             json: false,
-            command: crate::Commands::Paper { cmd: crate::PaperCmd::List },
+            command: crate::Commands::Paper {
+                cmd: crate::PaperCmd::List,
+            },
         }
     }
 
@@ -230,5 +240,4 @@ mod tests {
         let cli = make_cli(Some(std::path::PathBuf::from("/__nonexistent_xyz__")));
         assert_eq!(resolve_workspace(&cli), None);
     }
-
 }

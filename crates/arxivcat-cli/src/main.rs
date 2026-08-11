@@ -4,7 +4,11 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "arxivcat", about = "ArXiv paper extraction and chat tool", version)]
+#[command(
+    name = "arxivcat",
+    about = "ArXiv paper extraction and chat tool",
+    version
+)]
 pub struct Cli {
     #[arg(short = 'w', long, help = "Override workspace path")]
     pub workspace: Option<PathBuf>,
@@ -195,18 +199,10 @@ async fn main() {
                 let text_str = text.join(" ");
                 commands::paper::cmd_note(&cli, id_or_query, &text_str, *edit).await
             }
-            PaperCmd::Strip { id_or_query } => {
-                commands::paper::cmd_strip(&cli, id_or_query).await
-            }
-            PaperCmd::Open { id_or_query } => {
-                commands::paper::cmd_open(&cli, id_or_query).await
-            }
-            PaperCmd::Pdf { id_or_query } => {
-                commands::paper::cmd_pdf(&cli, id_or_query).await
-            }
-            PaperCmd::Info { id_or_query } => {
-                commands::paper::cmd_info(&cli, id_or_query).await
-            }
+            PaperCmd::Strip { id_or_query } => commands::paper::cmd_strip(&cli, id_or_query).await,
+            PaperCmd::Open { id_or_query } => commands::paper::cmd_open(&cli, id_or_query).await,
+            PaperCmd::Pdf { id_or_query } => commands::paper::cmd_pdf(&cli, id_or_query).await,
+            PaperCmd::Info { id_or_query } => commands::paper::cmd_info(&cli, id_or_query).await,
             PaperCmd::Describe { id_or_query } => {
                 commands::paper::cmd_describe(&cli, id_or_query).await
             }

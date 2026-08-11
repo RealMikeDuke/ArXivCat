@@ -146,13 +146,10 @@ async fn title_failure_never_blocks_download_folder() {
 
     let cfg = test_cfg(&server).await;
     let downloads = tempfile::tempdir().unwrap();
-    let (dir_opt, folder_name) = arxivcat_core::extract::source::download_source(
-        &cfg,
-        "2501.12948",
-        downloads.path(),
-    )
-    .await
-    .unwrap();
+    let (dir_opt, folder_name) =
+        arxivcat_core::extract::source::download_source(&cfg, "2501.12948", downloads.path())
+            .await
+            .unwrap();
     assert!(dir_opt.is_some());
     assert_eq!(
         folder_name.as_deref(),

@@ -1,19 +1,31 @@
+use crate::Cli;
 use arxivcat_core::chat::{self, ContextSelection};
 use arxivcat_core::config;
-use crate::Cli;
 
 use owo_colors::OwoColorize;
 
-fn gray(s: &str) -> String { s.dimmed().to_string() }
+fn gray(s: &str) -> String {
+    s.dimmed().to_string()
+}
 
 pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
     if cli.json {
-        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "--json is not supported for chat commands");
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for chat commands",
+        );
     }
     let ws_path = match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured",
+            );
         }
     };
 
@@ -28,7 +40,12 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
 
     let token = config::load_cached_token();
     if token.is_none() {
-        crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no API token configured. use 'arxivcat token set'");
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_CONFIG,
+            "config",
+            "no API token configured. use 'arxivcat token set'",
+        );
     }
 
     println!("{} {}", gray("Side chat — paper:"), paper.arxiv_id);
@@ -87,7 +104,11 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
                 }
                 "thinking" => {
                     deep_thinking = !deep_thinking;
-                    println!("{} reasoning effort: {}", gray("toggled"), if deep_thinking { "high" } else { "off" });
+                    println!(
+                        "{} reasoning effort: {}",
+                        gray("toggled"),
+                        if deep_thinking { "high" } else { "off" }
+                    );
                     continue;
                 }
                 "context" => {
@@ -124,7 +145,11 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
                     let mut session = chat::session::ChatSession::new("paper", &paper.arxiv_id);
                     session.messages = history.clone();
                     session.model = model.clone();
-                    session.reasoning_effort = if deep_thinking { "high".to_string() } else { "off".to_string() };
+                    session.reasoning_effort = if deep_thinking {
+                        "high".to_string()
+                    } else {
+                        "off".to_string()
+                    };
                     session.context_selection = selection.clone();
                     if let Err(e) = chat::session::save_session(&mut session, Some(&chat_dir)) {
                         eprintln!("error saving session: {e}");
@@ -261,12 +286,22 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
 
 pub async fn cmd_global(cli: &Cli) {
     if cli.json {
-        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "--json is not supported for chat commands");
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for chat commands",
+        );
     }
     let ws_path = match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured",
+            );
         }
     };
 
@@ -279,7 +314,12 @@ pub async fn cmd_global(cli: &Cli) {
 
     let token = config::load_cached_token();
     if token.is_none() {
-        crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no API token configured. use 'arxivcat token set'");
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_CONFIG,
+            "config",
+            "no API token configured. use 'arxivcat token set'",
+        );
     }
 
     let chat_dir = ws_path.join("arxivcat_global_chats");
@@ -341,7 +381,11 @@ pub async fn cmd_global(cli: &Cli) {
                 }
                 "thinking" => {
                     deep_thinking = !deep_thinking;
-                    println!("{} reasoning effort: {}", gray("toggled"), if deep_thinking { "high" } else { "off" });
+                    println!(
+                        "{} reasoning effort: {}",
+                        gray("toggled"),
+                        if deep_thinking { "high" } else { "off" }
+                    );
                     continue;
                 }
                 "context" => {
@@ -367,7 +411,11 @@ pub async fn cmd_global(cli: &Cli) {
                     let mut session = chat::session::ChatSession::new("global", "");
                     session.messages = history.clone();
                     session.model = model.clone();
-                    session.reasoning_effort = if deep_thinking { "high".to_string() } else { "off".to_string() };
+                    session.reasoning_effort = if deep_thinking {
+                        "high".to_string()
+                    } else {
+                        "off".to_string()
+                    };
                     session.context_selection = selection.clone();
                     if let Err(e) = chat::session::save_session(&mut session, Some(&chat_dir)) {
                         eprintln!("error saving session: {e}");

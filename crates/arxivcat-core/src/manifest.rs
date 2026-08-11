@@ -48,10 +48,7 @@ impl PaperManifest {
         }
         let content = std::fs::read_to_string(&path).map_err(ArxivError::Io)?;
         let m: PaperManifest = serde_json::from_str(&content).map_err(|e| {
-            ArxivError::Parse(format!(
-                "malformed manifest {}: {e}",
-                path.display()
-            ))
+            ArxivError::Parse(format!("malformed manifest {}: {e}", path.display()))
         })?;
         Ok(Some(m))
     }
@@ -101,8 +98,8 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         description: file_opt("description.md"),
     };
 
-    let description_ready = files.description.is_some()
-        && paper_dir.join(".description_ready").is_file();
+    let description_ready =
+        files.description.is_some() && paper_dir.join(".description_ready").is_file();
 
     Ok(PaperManifest {
         schema: 1,

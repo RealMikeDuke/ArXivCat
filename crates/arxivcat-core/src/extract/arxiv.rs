@@ -18,11 +18,10 @@ pub fn extract_arxiv_id_from_pdf(pdf_path: &std::path::Path) -> Result<Option<St
     let doc = lopdf::Document::load_mem(&bytes)
         .map_err(|e| ArxivError::Parse(format!("failed to parse PDF: {e}")))?;
 
-    let bare_pattern = Regex::new(r"(\d{4}\.\d{4,5}(?:v\d+)?)")
+    let bare_pattern =
+        Regex::new(r"(\d{4}\.\d{4,5}(?:v\d+)?)").map_err(|e| ArxivError::Other(e.to_string()))?;
+    let arxiv_pattern = Regex::new(r"arXiv[:\s]*(\d{4}\.\d{4,5}(?:v\d+)?)")
         .map_err(|e| ArxivError::Other(e.to_string()))?;
-    let arxiv_pattern =
-        Regex::new(r"arXiv[:\s]*(\d{4}\.\d{4,5}(?:v\d+)?)")
-            .map_err(|e| ArxivError::Other(e.to_string()))?;
 
     if let Ok(info_dict) = doc.trailer.get(b"Info") {
         if let Ok(info) = info_dict.as_dict() {
@@ -63,7 +62,10 @@ fn object_to_string(value: &lopdf::Object) -> String {
     }
 }
 
-pub async fn fetch_title_from_arxiv(cfg: &crate::net::HttpConfig, arxiv_id: &str) -> Result<Option<String>> {
+pub async fn fetch_title_from_arxiv(
+    cfg: &crate::net::HttpConfig,
+    arxiv_id: &str,
+) -> Result<Option<String>> {
     let url = cfg.arxiv_abs_url(arxiv_id);
     let response = cfg.get_with_retry(&url).await?;
 
@@ -72,9 +74,10 @@ pub async fn fetch_title_from_arxiv(cfg: &crate::net::HttpConfig, arxiv_id: &str
     let re = Regex::new(r#"<meta property="og:title" content="([^"]+)" "#)
         .map_err(|e| ArxivError::Other(e.to_string()))?;
 
-    Ok(re.captures(&html).and_then(|c| c.get(1)).map(|m| {
-        m.as_str().to_string()
-    }))
+    Ok(re
+        .captures(&html)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string()))
 }
 
 /// Batch-fetch titles via the export API (`/api/query?id_list=`, Atom).
@@ -119,7 +122,10 @@ pub fn parse_atom_entries(xml: &str) -> Vec<(String, String)> {
     let ws_re = Regex::new(r"\s+").unwrap();
     for entry in entry_re.find_iter(xml) {
         let block = entry.as_str();
-        let id = id_re.captures(block).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
+        let id = id_re
+            .captures(block)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string());
         let title = title_re.captures(block).and_then(|c| c.get(1)).map(|m| {
             // Collapse whitespace runs (Atom titles often span indented lines).
             ws_re.replace_all(m.as_str().trim(), " ").to_string()
@@ -191,7 +197,10 @@ mod tests {
 
     #[test]
     fn test_extract_arxiv_id_raw() {
-        assert_eq!(extract_arxiv_id("2501.12948"), Some("2501.12948".to_string()));
+        assert_eq!(
+            extract_arxiv_id("2501.12948"),
+            Some("2501.12948".to_string())
+        );
     }
 
     #[test]
@@ -240,8 +249,14 @@ mod tests {
         </feed>"#;
         let entries = parse_atom_entries(xml);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0], ("2501.12948v2".to_string(), "First Paper".to_string()));
-        assert_eq!(entries[1], ("2412.04445".to_string(), "Second Paper".to_string()));
+        assert_eq!(
+            entries[0],
+            ("2501.12948v2".to_string(), "First Paper".to_string())
+        );
+        assert_eq!(
+            entries[1],
+            ("2412.04445".to_string(), "Second Paper".to_string())
+        );
     }
 
     #[test]

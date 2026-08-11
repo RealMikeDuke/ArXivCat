@@ -1,20 +1,31 @@
 use std::path::PathBuf;
 
+use crate::Cli;
 use arxivcat_core::config;
 use arxivcat_core::workspace::Workspace;
-use crate::Cli;
 
 use owo_colors::OwoColorize;
 
-fn ok(s: &str) -> String { s.green().to_string() }
-fn warn(s: &str) -> String { s.yellow().to_string() }
-fn gray(s: &str) -> String { s.dimmed().to_string() }
+fn ok(s: &str) -> String {
+    s.green().to_string()
+}
+fn warn(s: &str) -> String {
+    s.yellow().to_string()
+}
+fn gray(s: &str) -> String {
+    s.dimmed().to_string()
+}
 
 fn get_ws(cli: &Cli) -> PathBuf {
     match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured",
+            );
         }
     }
 }
@@ -65,7 +76,12 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     let arxiv_id = match arxivcat_core::extract::arxiv::extract_arxiv_id(id_or_url) {
         Some(id) => id,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "could not extract arXiv ID from input");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_USAGE,
+                "usage",
+                "could not extract arXiv ID from input",
+            );
         }
     };
 
@@ -78,7 +94,9 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     };
 
     let (paper_dir_opt, folder_name_opt) =
-        match arxivcat_core::extract::source::download_source(&http, &arxiv_id, &downloads_dir).await {
+        match arxivcat_core::extract::source::download_source(&http, &arxiv_id, &downloads_dir)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 crate::commands::die_err(cli, &e);
@@ -88,23 +106,25 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     let paper_dir = match paper_dir_opt {
         Some(d) => d,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "data", "source download returned None");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_DATA,
+                "data",
+                "source download returned None",
+            );
         }
     };
 
-    let folder_name = folder_name_opt.unwrap_or_else(|| {
-        arxiv_id.replace('.', "_")
-    });
+    let folder_name = folder_name_opt.unwrap_or_else(|| arxiv_id.replace('.', "_"));
 
     let output_dir = ws_path.join(&folder_name);
 
-    let output =
-        match arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &output_dir) {
-            Ok(o) => o,
-            Err(e) => {
-                crate::commands::die_err(cli, &e);
-            }
-        };
+    let output = match arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &output_dir) {
+        Ok(o) => o,
+        Err(e) => {
+            crate::commands::die_err(cli, &e);
+        }
+    };
 
     for w in &output.warnings {
         eprintln!("warning: {w}");
@@ -187,7 +207,10 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
         return;
     }
 
-    eprintln!("downloading {} pending papers (jobs={jobs})...", pending.len());
+    eprintln!(
+        "downloading {} pending papers (jobs={jobs})...",
+        pending.len()
+    );
 
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Real Ctrl-C: flip the flag; workers observe it and the command exits 130.
@@ -223,7 +246,11 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
         handles.push(tokio::spawn(async move {
             let _permit = permit;
             let res = arxivcat_core::workspace::process_pending_paper(
-                &http, &paper, &downloads_dir, &ws_path, &cancel,
+                &http,
+                &paper,
+                &downloads_dir,
+                &ws_path,
+                &cancel,
             )
             .await;
             (paper, res)
@@ -313,20 +340,26 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
     if cli.json {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
-                println!("{}", serde_json::json!({
-                    "arxiv_id": paper.arxiv_id,
-                    "title": paper.title,
-                    "view": view,
-                    "content": content,
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "title": paper.title,
+                        "view": view,
+                        "content": content,
+                    })
+                );
             }
             Err(_) => {
-                println!("{}", serde_json::json!({
-                    "arxiv_id": paper.arxiv_id,
-                    "title": paper.title,
-                    "view": view,
-                    "error": "file not found"
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "title": paper.title,
+                        "view": view,
+                        "error": "file not found"
+                    })
+                );
             }
         }
         return;
@@ -358,16 +391,24 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
         let editor = std::env::var("EDITOR")
             .or_else(|_| std::env::var("VISUAL"))
             .unwrap_or_else(|_| "notepad".to_string());
-        let status = std::process::Command::new(&editor)
-            .arg(&note_path)
-            .status();
+        let status = std::process::Command::new(&editor).arg(&note_path).status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
-                crate::commands::die(cli, crate::commands::EXIT_OTHER, "other", &format!("editor exited with {s}"));
+                crate::commands::die(
+                    cli,
+                    crate::commands::EXIT_OTHER,
+                    "other",
+                    &format!("editor exited with {s}"),
+                );
             }
             Err(e) => {
-                crate::commands::die(cli, crate::commands::EXIT_OTHER, "other", &format!("failed to launch editor '{editor}': {e}"));
+                crate::commands::die(
+                    cli,
+                    crate::commands::EXIT_OTHER,
+                    "other",
+                    &format!("failed to launch editor '{editor}': {e}"),
+                );
             }
         }
     } else if !text.is_empty() {
@@ -602,10 +643,9 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     };
 
     let result = async {
-        let (dir_opt, _) = arxivcat_core::extract::source::download_source(
-            &http, &paper.arxiv_id, &downloads_dir,
-        )
-        .await?;
+        let (dir_opt, _) =
+            arxivcat_core::extract::source::download_source(&http, &paper.arxiv_id, &downloads_dir)
+                .await?;
         let dir = dir_opt.ok_or_else(|| {
             arxivcat_core::error::ArxivError::Other("source download returned nothing".into())
         })?;

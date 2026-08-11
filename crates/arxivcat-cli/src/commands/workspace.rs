@@ -1,12 +1,22 @@
-use arxivcat_core::config;
 use crate::Cli;
+use arxivcat_core::config;
 
 pub async fn cmd_open(cli: &Cli, path: &std::path::Path) {
     if !path.exists() {
-        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", &format!("path does not exist: {}", path.display()));
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            &format!("path does not exist: {}", path.display()),
+        );
     }
     if !path.is_dir() {
-        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", &format!("path is not a directory: {}", path.display()));
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            &format!("path is not a directory: {}", path.display()),
+        );
     }
 
     match config::save_workspace_path(path) {
@@ -22,7 +32,12 @@ pub async fn cmd_scan(cli: &Cli) {
     let ws_path = match ws_path {
         Some(p) => p,
         None => {
-            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured. use 'arxivcat workspace open <path>'");
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured. use 'arxivcat workspace open <path>'",
+            );
         }
     };
 

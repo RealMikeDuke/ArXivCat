@@ -7,10 +7,7 @@ pub fn get_cache_dir() -> PathBuf {
         PathBuf::from(appdata).join("ArxivCat")
     } else {
         dirs::data_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-            })
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
             .join("ArxivCat")
     }
 }
@@ -139,8 +136,7 @@ mod tests {
 
     #[test]
     fn test_config_deserialize_partial_fields() {
-        let config: Config =
-            serde_json::from_str(r#"{"workspace_path": "/my/ws"}"#).unwrap();
+        let config: Config = serde_json::from_str(r#"{"workspace_path": "/my/ws"}"#).unwrap();
         assert_eq!(config.workspace_path, Some("/my/ws".into()));
         assert_eq!(config.deepseek_api_key, None);
         assert_eq!(config.chat_model, None);

@@ -13,10 +13,7 @@ fn bin() -> Command {
 }
 
 fn tmp_ws(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "arxivcat_contract_{}_{tag}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("arxivcat_contract_{}_{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -31,7 +28,10 @@ fn parse_json(s: &str) -> serde_json::Value {
 fn usage_error_exits_2() {
     let out = bin().arg("badcommand").output().unwrap();
     assert_eq!(out.status.code(), Some(2), "usage error must exit 2");
-    assert!(out.stdout.is_empty(), "human mode: stdout must be empty on usage error");
+    assert!(
+        out.stdout.is_empty(),
+        "human mode: stdout must be empty on usage error"
+    );
 }
 
 #[test]
@@ -54,7 +54,15 @@ fn unknown_subcommand_json_envelope() {
 
 #[test]
 fn chat_json_rejected_as_usage() {
-    let out = bin().args(["-w", tmp_ws("chat").to_str().unwrap(), "chat", "side", "2501.12948", "--json"])
+    let out = bin()
+        .args([
+            "-w",
+            tmp_ws("chat").to_str().unwrap(),
+            "chat",
+            "side",
+            "2501.12948",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
@@ -68,7 +76,11 @@ fn missing_workspace_exits_config() {
         .args(["-w", "/__nonexistent_ws__", "paper", "list", "--json"])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(4), "missing workspace is a config error");
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "missing workspace is a config error"
+    );
     let v = parse_json(&String::from_utf8_lossy(&out.stdout));
     assert_eq!(v["error"]["code"], 4);
     assert_eq!(v["error"]["kind"], "config");
@@ -98,7 +110,10 @@ fn paper_list_json_single_document() {
     let v = parse_json(&String::from_utf8_lossy(&out.stdout));
     assert!(v.is_array(), "list --json must output an array, got {v}");
     assert_eq!(v[0]["arxiv_id"], "2501.12948");
-    assert_eq!(v[0]["is_complete"], true, "is_complete = has_body (AI decoupled)");
+    assert_eq!(
+        v[0]["is_complete"], true,
+        "is_complete = has_body (AI decoupled)"
+    );
 }
 
 #[test]
@@ -121,12 +136,21 @@ fn download_all_json_stdout_single_document() {
     std::fs::write(pdir.join("body.tex"), "x").unwrap();
 
     let out = bin()
-        .args(["-w", ws.to_str().unwrap(), "paper", "download-all", "--json"])
+        .args([
+            "-w",
+            ws.to_str().unwrap(),
+            "paper",
+            "download-all",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(!stdout.contains('\r'), "no \\r progress in --json stdout: {stdout:?}");
+    assert!(
+        !stdout.contains('\r'),
+        "no \\r progress in --json stdout: {stdout:?}"
+    );
     let v = parse_json(&stdout);
     assert_eq!(v["status"], "done", "download-all --json emits status=done");
 }
