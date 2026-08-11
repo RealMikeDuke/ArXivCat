@@ -6,22 +6,52 @@ use crate::error::{ArxivError, Result};
 use crate::extract::ExtractionOutput;
 
 pub fn find_main_tex(paper_dir: &Path) -> Option<PathBuf> {
+    // main.tex is only trusted if it actually declares a document class;
+    // otherwise a section file named main.tex would be mis-selected.
     let main_candidate = paper_dir.join("main.tex");
-    if main_candidate.exists() {
-        return Some(main_candidate);
+    if main_candidate.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&main_candidate) {
+            if content.contains("\\documentclass") {
+                return Some(main_candidate);
+            }
+        }
     }
 
-    let glob_pattern = format!("{}/*.tex", paper_dir.display());
-    if let Ok(entries) = glob::glob(&glob_pattern) {
+    // Scan top-level *.tex, then recurse into subdirectories (e.g. source/main.tex).
+    // Prefer shallower candidates so nested copies don't shadow the real main file.
+    let mut candidates: Vec<(usize, PathBuf)> = Vec::new();
+
+    let top_pattern = format!("{}/*.tex", paper_dir.display());
+    if let Ok(entries) = glob::glob(&top_pattern) {
         for entry in entries.flatten() {
+            if !entry.is_file() {
+                continue;
+            }
             if let Ok(content) = std::fs::read_to_string(&entry) {
                 if content.contains("\\documentclass") {
-                    return Some(entry);
+                    candidates.push((1, entry));
                 }
             }
         }
     }
-    None
+
+    let nested_pattern = format!("{}/**/*.tex", paper_dir.display());
+    if let Ok(entries) = glob::glob(&nested_pattern) {
+        for entry in entries.flatten() {
+            if !entry.is_file() {
+                continue;
+            }
+            let depth = entry.components().count();
+            if let Ok(content) = std::fs::read_to_string(&entry) {
+                if content.contains("\\documentclass") {
+                    candidates.push((depth, entry));
+                }
+            }
+        }
+    }
+
+    candidates.sort_by_key(|(depth, path)| (*depth, path.to_string_lossy().to_string()));
+    candidates.into_iter().next().map(|(_, path)| path)
 }
 
 pub fn strip_latex_comments(tex_content: &str) -> String {

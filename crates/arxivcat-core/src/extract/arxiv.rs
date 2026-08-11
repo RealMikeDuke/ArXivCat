@@ -102,8 +102,8 @@ pub fn sanitize_filename(name: &str) -> String {
         return "untitled".to_string();
     }
 
-    if trimmed.len() > 80 {
-        trimmed[..80].to_string()
+    if trimmed.chars().count() > 80 {
+        trimmed.chars().take(80).collect()
     } else {
         trimmed
     }
@@ -173,5 +173,25 @@ mod tests {
         let long = "a".repeat(100);
         let result = sanitize_filename(&long);
         assert!(result.len() <= 80);
+    }
+
+    #[test]
+    fn test_sanitize_filename_multibyte_no_panic() {
+        // Regression: byte-slice truncation [..80] panicked on multibyte titles.
+        // 100 CJK chars = 300 bytes; must truncate at char boundary, no panic.
+        let long = "论".repeat(100);
+        let result = sanitize_filename(&long);
+        assert_eq!(result.chars().count(), 80);
+        assert_eq!(result.chars().all(|c| c == '论'), true);
+    }
+
+    #[test]
+    fn test_sanitize_filename_boundary_cjk() {
+        // 79 ASCII bytes + 1 CJK char (3 bytes) = 82 bytes; truncation must
+        // not split the CJK char.
+        let mixed = format!("{}论", "a".repeat(79));
+        let result = sanitize_filename(&mixed);
+        assert_eq!(result.chars().count(), 80);
+        assert!(result.ends_with('论'));
     }
 }

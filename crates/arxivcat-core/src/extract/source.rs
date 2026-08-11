@@ -107,7 +107,7 @@ pub async fn download_pdf(arxiv_id: &str, output_dir: &Path) -> Result<Option<Pa
 }
 
 fn validate_cache(paper_dir: &Path) -> Result<bool> {
-    let main_tex = find_main_tex_in_dir(paper_dir);
+    let main_tex = crate::extract::tex::find_main_tex(paper_dir);
     if main_tex.is_none() {
         return Ok(false);
     }
@@ -121,24 +121,6 @@ fn validate_cache(paper_dir: &Path) -> Result<bool> {
     }
 
     Ok(true)
-}
-
-fn find_main_tex_in_dir(dir: &Path) -> Option<PathBuf> {
-    let main_candidate = dir.join("main.tex");
-    if main_candidate.exists() {
-        return Some(main_candidate);
-    }
-    let glob_pattern = format!("{}/*.tex", dir.display());
-    if let Ok(entries) = glob::glob(&glob_pattern) {
-        for entry in entries.flatten() {
-            if let Ok(content) = std::fs::read_to_string(&entry) {
-                if content.contains("\\documentclass") {
-                    return Some(entry);
-                }
-            }
-        }
-    }
-    None
 }
 
 fn can_walk_dir(dir: &Path) -> bool {
@@ -269,11 +251,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_find_main_tex_prefers_main_dot_tex() {
+    fn test_validate_cache_requires_documentclass_main() {
+        // main.tex without \documentclass is not trusted (shared find_main_tex
+        // semantics); a top-level paper.tex with \documentclass wins.
         let dir = tempfile::tempdir().unwrap();
-        let fake_main = dir.path().join("main.tex");
-        std::fs::write(&fake_main, "content").unwrap();
-        assert_eq!(find_main_tex_in_dir(dir.path()), Some(fake_main));
+        std::fs::write(dir.path().join("main.tex"), "section content").unwrap();
+        assert!(validate_cache(dir.path()).unwrap() == false);
+
+        std::fs::write(dir.path().join("paper.tex"), "\\documentclass{article}").unwrap();
+        assert!(validate_cache(dir.path()).unwrap());
     }
 
     #[test]
