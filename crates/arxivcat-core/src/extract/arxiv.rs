@@ -224,6 +224,30 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_atom_entries_multiple() {
+        let xml = r#"<?xml version="1.0"?>
+        <feed>
+          <entry>
+            <id>http://arxiv.org/abs/2501.12948v2</id>
+            <title>First   Paper</title>
+          </entry>
+          <entry>
+            <id>http://arxiv.org/abs/2412.04445</id>
+            <title>Second Paper</title>
+          </entry>
+        </feed>"#;
+        let entries = parse_atom_entries(xml);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], ("2501.12948v2".to_string(), "First Paper".to_string()));
+        assert_eq!(entries[1], ("2412.04445".to_string(), "Second Paper".to_string()));
+    }
+
+    #[test]
+    fn test_parse_atom_entries_empty() {
+        assert!(parse_atom_entries("<feed></feed>").is_empty());
+    }
+
+    #[test]
     fn test_sanitize_filename_simple() {
         assert_eq!(sanitize_filename("Hello World"), "Hello_World");
     }
