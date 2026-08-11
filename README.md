@@ -38,12 +38,14 @@ arxivcat paper list --json
 ## Commands
 
 - `workspace open|scan` — manage the workspace folder
-- `paper list|download|download-all|preview|note|strip|info|open|pdf` — manage papers
+- `paper list|download|download-all [--jobs N] [--force]|preview|note|strip|info|describe|open|pdf|remove|redownload` — manage papers
 - `token status|set|validate` — manage the DeepSeek API key (optional, for AI features)
 
 ## Documentation
 
-Full CLI manual (commands, JSON schemas, exit codes, ID matching): [docs/cli.md](docs/cli.md)
+- [docs/cli.md](docs/cli.md) — full CLI manual: commands, JSON schemas, **exit-code contract**, ID matching
+- [docs/maintenance-decisions.md](docs/maintenance-decisions.md) — maintainer decisions (error kinds, publish order)
+- [docs/gui-revival.md](docs/gui-revival.md) — GUI revival manual (legacy-gui branch)
 
 ## License
 

@@ -332,4 +332,6 @@ stderr (`\r` progress is TTY-gated); human-readable errors go to stderr.
 
 ## See Also
 
-- [final-plan-v2.md](./final-plan-v2.md) — CLI projectization plan (expert-reviewed, 2026-08)
+- [gui-revival.md](./gui-revival.md) — how to bring back the GUI from legacy-gui
+- [maintenance-decisions.md](./maintenance-decisions.md) — repair_permissions assessment, error kinds, publish order
+- [final-plan-v2.md](./final-plan-v2.md) — projectization plan archive (executed)
