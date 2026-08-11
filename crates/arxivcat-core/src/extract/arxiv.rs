@@ -116,15 +116,13 @@ pub fn parse_atom_entries(xml: &str) -> Vec<(String, String)> {
     let entry_re = Regex::new(r"(?s)<entry>.*?</entry>").unwrap();
     let id_re = Regex::new(r"(?s)<id>.*?/abs/(\d{4}\.\d{4,5}(?:v\d+)?)</id>").unwrap();
     let title_re = Regex::new(r"(?s)<title>(.*?)</title>").unwrap();
+    let ws_re = Regex::new(r"\s+").unwrap();
     for entry in entry_re.find_iter(xml) {
         let block = entry.as_str();
         let id = id_re.captures(block).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
         let title = title_re.captures(block).and_then(|c| c.get(1)).map(|m| {
             // Collapse whitespace runs (Atom titles often span indented lines).
-            Regex::new(r"\s+")
-                .unwrap()
-                .replace_all(m.as_str().trim(), " ")
-                .to_string()
+            ws_re.replace_all(m.as_str().trim(), " ").to_string()
         });
         if let (Some(id), Some(title)) = (id, title) {
             out.push((id, title));
