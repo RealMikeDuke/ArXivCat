@@ -3,6 +3,8 @@ name = "arxivcat-core"
 version = "0.11.0"
 edition = "2021"
 description = "Core library for ArxivCat - arXiv paper extraction, workspace management, and chat"
+license = "MIT"
+repository = "https://github.com/ArXivCat/arxivcat"
 
 [dependencies]
 serde = { workspace = true }
