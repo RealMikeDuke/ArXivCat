@@ -4,6 +4,33 @@ use crate::error::{ArxivError, Result};
 use crate::extract::arxiv::fetch_title_from_arxiv;
 use crate::net::HttpConfig;
 
+/// Cross-process download lock (P1.7): a lock file per base ID under
+/// `{downloads_dir}/.locks/`. Released on drop (including error paths).
+struct DownloadLock {
+    path: PathBuf,
+}
+
+impl DownloadLock {
+    fn acquire(downloads_dir: &Path, id_dir_name: &str) -> Result<Self> {
+        let lock_dir = downloads_dir.join(".locks");
+        std::fs::create_dir_all(&lock_dir)?;
+        let path = lock_dir.join(format!("{id_dir_name}.lock"));
+        if path.exists() {
+            return Err(ArxivError::Other(format!(
+                "another process is already downloading {id_dir_name}"
+            )));
+        }
+        std::fs::write(&path, "")?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for DownloadLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Find a legacy `{id}_{title}` cache dir for a base ID (P1.2 compat).
 fn find_legacy_cache(downloads_dir: &Path, base_id_dir: &str) -> Option<PathBuf> {
     let pattern = format!("{}/{}_*", downloads_dir.display(), base_id_dir);
@@ -84,6 +111,9 @@ pub async fn download_source(
     let folder_name = id_dir_name.clone();
     let paper_dir = downloads_dir.join(&folder_name);
 
+    // P1.7: cross-process download lock — one downloader per paper at a time.
+    let _lock = DownloadLock::acquire(downloads_dir, &id_dir_name)?;
+
     let tar_url = cfg.arxiv_src_url(arxiv_id);
     let response = cfg.get_with_retry(&tar_url).await?;
 
@@ -94,7 +124,20 @@ pub async fn download_source(
         )));
     }
 
-    let tar_path = downloads_dir.join(format!("{arxiv_id}.tar.gz"));
+    // P1.8: unique temp tar name (pid+ts) so concurrent runs never collide
+    // on a fixed `{id}.tar.gz` path.
+    let tar_dir = downloads_dir.join(".tmp");
+    std::fs::create_dir_all(&tar_dir)?;
+    let unique = format!(
+        "{}_{}_{}.tar.gz",
+        id_dir_name,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let tar_path = tar_dir.join(unique);
     let bytes = response
         .bytes()
         .await

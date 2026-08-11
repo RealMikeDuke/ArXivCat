@@ -105,6 +105,12 @@ pub enum PaperCmd {
 
     #[command(about = "Generate AI description for a paper (requires DeepSeek API key)")]
     Describe { id_or_query: String },
+
+    #[command(about = "Remove a paper folder from the workspace")]
+    Remove { id_or_query: String },
+
+    #[command(about = "Re-download a paper (notes/descriptions are preserved)")]
+    Redownload { id_or_query: String },
 }
 
 #[derive(Subcommand)]
@@ -203,6 +209,12 @@ async fn main() {
             }
             PaperCmd::Describe { id_or_query } => {
                 commands::paper::cmd_describe(&cli, id_or_query).await
+            }
+            PaperCmd::Remove { id_or_query } => {
+                commands::paper::cmd_remove(&cli, id_or_query).await
+            }
+            PaperCmd::Redownload { id_or_query } => {
+                commands::paper::cmd_redownload(&cli, id_or_query).await
             }
         },
         Commands::Chat { cmd } => match cmd {

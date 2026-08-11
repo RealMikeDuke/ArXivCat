@@ -537,6 +537,110 @@ pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
     }
 }
 
+pub async fn cmd_remove(cli: &Cli, id_or_query: &str) {
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+
+    match std::fs::remove_dir_all(&paper.folder) {
+        Ok(()) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"removed": paper.arxiv_id, "folder": paper.folder_name})
+                );
+            } else {
+                println!("removed {} ({})", paper.arxiv_id, paper.folder_name);
+            }
+        }
+        Err(e) => {
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_IO,
+                "io",
+                &format!("failed to remove {}: {e}", paper.folder.display()),
+            );
+        }
+    }
+}
+
+pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
+    let _ws_path = get_ws(cli); // validates workspace config
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+
+    let folder = paper.folder.clone();
+    // Preserve user metadata across the re-download (P1.5).
+    let backup = std::env::temp_dir().join(format!(
+        "arxivcat_redl_{}_{}",
+        std::process::id(),
+        paper.folder_name
+    ));
+    let _ = std::fs::create_dir_all(&backup);
+    for name in ["note.txt", "description.md", "arxiv_chats"] {
+        let src = folder.join(name);
+        if src.exists() {
+            let _ = std::fs::rename(&src, backup.join(name));
+        }
+    }
+
+    match std::fs::remove_dir_all(&folder) {
+        Ok(()) => {}
+        Err(e) => {
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_IO,
+                "io",
+                &format!("failed to remove {}: {e}", folder.display()),
+            );
+        }
+    }
+
+    let downloads_dir = config::get_downloads_dir();
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
+
+    let result = async {
+        let (dir_opt, _) = arxivcat_core::extract::source::download_source(
+            &http, &paper.arxiv_id, &downloads_dir,
+        )
+        .await?;
+        let dir = dir_opt.ok_or_else(|| {
+            arxivcat_core::error::ArxivError::Other("source download returned nothing".into())
+        })?;
+        arxivcat_core::extract::tex::extract_body_from_dir(&dir, &folder)?;
+        let _ = arxivcat_core::extract::source::download_pdf(&http, &paper.arxiv_id, &folder).await;
+        arxivcat_core::workspace::ensure_paper_meta_files(&folder)?;
+        arxivcat_core::manifest::refresh_manifest(&folder, &paper.arxiv_id, &paper.title)?;
+        Ok::<_, arxivcat_core::error::ArxivError>(())
+    }
+    .await;
+
+    // Restore metadata even on failure.
+    for name in ["note.txt", "description.md", "arxiv_chats"] {
+        let src = backup.join(name);
+        if src.exists() {
+            let _ = std::fs::rename(&src, folder.join(name));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+
+    match result {
+        Ok(()) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"redownloaded": paper.arxiv_id, "folder": paper.folder_name})
+                );
+            } else {
+                println!("re-downloaded {} ({})", paper.arxiv_id, paper.folder_name);
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
