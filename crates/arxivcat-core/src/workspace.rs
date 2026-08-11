@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::error::{ArxivError, Result};
 use crate::extract::{arxiv::extract_arxiv_id_from_pdf, source::download_pdf};
 
 const WORKSPACE_INTERNAL_DIRS: &[&str] = &["arxivcat_global_chats"];
@@ -69,13 +69,16 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn open(path: &Path) -> Result<Self> {
+        // Read-only open: never create directories here. Commands that need
+        // to write (download, chat, note, ...) create dirs explicitly. This
+        // lets `paper list` work on a read-only workspace (P0.9).
         let path = path.to_path_buf();
         if !path.exists() {
-            std::fs::create_dir_all(&path)?;
+            return Err(ArxivError::NotFound(format!(
+                "workspace not found: {}",
+                path.display()
+            )));
         }
-        let global_chats = path.join("arxivcat_global_chats");
-        std::fs::create_dir_all(&global_chats)?;
-
         let papers = Self::list_papers(&path);
         Ok(Workspace { path, papers })
     }

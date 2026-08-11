@@ -51,7 +51,16 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        // Atomic write (temp + rename) so a crash never leaves a half-written
+        // config. Config may hold the API key, so force 0600 on unix.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&tmp, &path)?;
         Ok(())
     }
 
@@ -142,5 +151,38 @@ mod tests {
         let config: Config =
             serde_json::from_str(r#"{"workspace_path": "/ws", "unknown": 123}"#).unwrap();
         assert_eq!(config.workspace_path, Some("/ws".into()));
+    }
+
+    #[test]
+    fn test_config_save_atomic_and_0600() {
+        // Isolate via APPDATA so the real user config is never touched.
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("APPDATA", dir.path()) };
+
+        let cfg = Config {
+            deepseek_api_key: Some("sk-test".into()),
+            chat_model: Some("Flash".into()),
+            workspace_path: Some("/tmp/ws".into()),
+        };
+        cfg.save().unwrap();
+
+        let path = dir.path().join("ArxivCat").join("config.json");
+        assert!(path.exists(), "config.json written under isolated APPDATA");
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "no .tmp residue after atomic write"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "config (may hold API key) must be 0600");
+        }
+
+        // Roundtrip through the same isolated dir.
+        let loaded = Config::load().unwrap();
+        assert_eq!(loaded.deepseek_api_key.as_deref(), Some("sk-test"));
+        assert_eq!(loaded.workspace_path.as_deref(), Some("/tmp/ws"));
     }
 }
