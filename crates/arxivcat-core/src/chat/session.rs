@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
@@ -27,12 +26,8 @@ pub struct ChatSession {
     pub model: String,
     #[serde(default = "default_reasoning_effort")]
     pub reasoning_effort: String,
-    #[serde(default)]
-    pub locked_fields: HashMap<String, Vec<String>>,
     pub messages: Vec<ChatMessage>,
     pub context_selection: ContextSelection,
-    pub context_snapshot: String,
-    pub view_name: String,
     pub updated_at: String,
 }
 
@@ -55,11 +50,8 @@ impl ChatSession {
             kind: kind.to_string(),
             model: "Flash".to_string(),
             reasoning_effort: "low".to_string(),
-            locked_fields: HashMap::new(),
             messages: Vec::new(),
             context_selection: ContextSelection::default(),
-            context_snapshot: String::new(),
-            view_name: "body".to_string(),
             updated_at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
         }
     }

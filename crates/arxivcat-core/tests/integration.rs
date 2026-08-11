@@ -391,6 +391,31 @@ We conclude.";
     }
 
     #[test]
+    fn old_gui_session_json_still_deserializes() {
+        // P0.12: ChatSession no longer has locked_fields / context_snapshot /
+        // view_name (GUI-era). serde must ignore those unknown keys when
+        // reading session files written by the old GUI version.
+        let json = r#"{
+            "title": "2501.12948 2026-01-01 12:00",
+            "kind": "paper",
+            "model": "Flash",
+            "reasoning_effort": "low",
+            "locked_fields": {"2501_12948_Test": ["body"]},
+            "messages": [{"speaker": "user", "content": "hi"}],
+            "context_selection": {"body": true, "appendix": false, "description": false, "note": false},
+            "context_snapshot": "body:\n...",
+            "view_name": "body",
+            "updated_at": "2026-01-01T12:00:00"
+        }"#;
+        let session: arxivcat_core::chat::session::ChatSession =
+            serde_json::from_str(json).unwrap();
+        assert_eq!(session.messages.len(), 1);
+        assert_eq!(session.title, "2501.12948 2026-01-01 12:00");
+        assert_eq!(session.kind, "paper");
+        assert_eq!(session.model, "Flash");
+    }
+
+    #[test]
     fn side_chat_context_empty_returns_placeholder() {
         let dir = tempfile::tempdir().unwrap();
         let selection = ContextSelection::default();

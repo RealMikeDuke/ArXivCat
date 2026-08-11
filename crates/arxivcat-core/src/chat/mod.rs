@@ -102,18 +102,6 @@ pub fn build_global_chat_context(papers: &[Paper], selection: &ContextSelection)
     }
 }
 
-pub fn compute_selection_delta(
-    current: &ContextSelection,
-    last_sent: &ContextSelection,
-) -> ContextSelection {
-    ContextSelection {
-        body: current.body && !last_sent.body,
-        appendix: current.appendix && !last_sent.appendix,
-        description: current.description && !last_sent.description,
-        note: current.note && !last_sent.note,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,50 +187,5 @@ mod tests {
         let ctx = build_global_chat_context(&papers, &sel);
         assert!(ctx.contains("body text"));
         assert!(ctx.contains("my note"));
-    }
-
-    #[test]
-    fn test_compute_selection_delta_only_new_fields() {
-        let current = ContextSelection {
-            body: true, appendix: true, description: false, note: false,
-        };
-        let last_sent = ContextSelection {
-            body: true, appendix: false, description: false, note: false,
-        };
-        let delta = compute_selection_delta(&current, &last_sent);
-        assert!(!delta.body);      // already sent
-        assert!(delta.appendix);   // new
-        assert!(!delta.description);
-        assert!(!delta.note);
-    }
-
-    #[test]
-    fn test_compute_selection_delta_all_new() {
-        let current = ContextSelection {
-            body: true, appendix: true, description: true, note: true,
-        };
-        let last_sent = ContextSelection {
-            body: false, appendix: false, description: false, note: false,
-        };
-        let delta = compute_selection_delta(&current, &last_sent);
-        assert!(delta.body);
-        assert!(delta.appendix);
-        assert!(delta.description);
-        assert!(delta.note);
-    }
-
-    #[test]
-    fn test_compute_selection_delta_unselected_ignored() {
-        let current = ContextSelection {
-            body: false, appendix: false, description: false, note: false,
-        };
-        let last_sent = ContextSelection {
-            body: true, appendix: true, description: true, note: true,
-        };
-        let delta = compute_selection_delta(&current, &last_sent);
-        assert!(!delta.body);
-        assert!(!delta.appendix);
-        assert!(!delta.description);
-        assert!(!delta.note);
     }
 }
