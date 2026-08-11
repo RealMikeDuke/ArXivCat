@@ -104,9 +104,16 @@ Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → 
 {"arxiv_id":"2501.12948","folder":"...","body_length":41953,"appendix_length":159056,"description_ready":true}
 ```
 
-#### `download-all`
+#### `download-all [--jobs N] [--force]`
 
-Process every pending paper (missing body.tex) sequentially. Skips papers that already have body.tex. AI description is not required for completion.
+Process every pending paper (missing body.tex) concurrently (`--jobs`, default 4, range 1-8). Papers in the 24h retry cooldown are skipped and reported; `--force` bypasses the cooldown. Ctrl-C stops the batch and exits 130.
+
+Exit codes: 0 all succeeded / 8 partial (some failed) / 1 all failed / 130 interrupted.
+
+**JSON output**:
+```json
+{"status":"done|partial|failed|cancelled","total":3,"success":2,"failed":1,"skipped":0,"failures":[{"id":"2501.12948","code":3,"kind":"http","message":"...","retryable":true}]}
+```
 
 **JSON output**: `{"status":"done","success":3,"total":5}` (or `{"status":"complete","count":0}` if nothing to do).
 
@@ -286,6 +293,8 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |
+| `paper remove` | `{removed, folder}` |
+| `paper redownload` | `{redownloaded, folder}` |
 | `token status` | Token configured, masked, valid, response time |
 
 ---
