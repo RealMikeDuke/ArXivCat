@@ -1,8 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{ArxivError, Result};
-use crate::extract::arxiv::{fetch_title_from_arxiv, sanitize_filename};
+use crate::extract::arxiv::fetch_title_from_arxiv;
 use crate::net::HttpConfig;
+
+/// Find a legacy `{id}_{title}` cache dir for a base ID (P1.2 compat).
+fn find_legacy_cache(downloads_dir: &Path, base_id_dir: &str) -> Option<PathBuf> {
+    let pattern = format!("{}/{}_*", downloads_dir.display(), base_id_dir);
+    let entries = glob::glob(&pattern).ok()?;
+    entries.flatten().find(|e| e.is_dir())
+}
 
 pub async fn download_source(
     cfg: &HttpConfig,
@@ -11,10 +18,10 @@ pub async fn download_source(
 ) -> Result<(Option<PathBuf>, Option<String>)> {
     std::fs::create_dir_all(downloads_dir)?;
 
-    let id_dir_name = arxiv_id.replace('.', "_");
+    // P1.2: canonical folder name is the version-stripped base ID, no title.
+    let id_dir_name = crate::manifest::strip_version(arxiv_id).replace('.', "_");
 
-    // Cache-first: the ID-only folder (P1 canonical form) must hit without
-    // any network request at all.
+    // Cache-first: the ID-only folder must hit without any network request.
     let id_dir = downloads_dir.join(&id_dir_name);
     if id_dir.exists() {
         if validate_cache(&id_dir)? {
@@ -35,40 +42,47 @@ pub async fn download_source(
         }
     }
 
-    // Title is best-effort only — a failed title fetch must never block the
-    // download (P0.7). Fallback folder name is ID-only (no "unknown").
-    let title = fetch_title_from_arxiv(cfg, arxiv_id)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default();
-
-    let folder_name = if title.is_empty() {
-        id_dir_name.clone()
-    } else {
-        format!("{}_{}", id_dir_name, sanitize_filename(&title))
-    };
-
-    let paper_dir = downloads_dir.join(&folder_name);
-
-    // A legacy {id}_{title} cache dir for the same paper may already exist.
-    if paper_dir.exists() {
-        if validate_cache(&paper_dir)? {
-            return Ok((Some(paper_dir), Some(folder_name)));
+    // A legacy {id}_{title} cache dir for the same paper may already exist;
+    // accept it (read-only compat), new downloads are always ID-only.
+    let legacy_name = find_legacy_cache(downloads_dir, &id_dir_name);
+    if let Some(legacy_name) = legacy_name {
+        if validate_cache(&legacy_name)? {
+            let legacy_folder = legacy_name
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            return Ok((Some(legacy_name), Some(legacy_folder)));
         }
-        force_uniform_permissions(&paper_dir)?;
-        if validate_cache(&paper_dir)? {
-            return Ok((Some(paper_dir), Some(folder_name)));
+        force_uniform_permissions(&legacy_name)?;
+        if validate_cache(&legacy_name)? {
+            let legacy_folder = legacy_name
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            return Ok((Some(legacy_name), Some(legacy_folder)));
         }
-        match std::fs::remove_dir_all(&paper_dir) {
+        match std::fs::remove_dir_all(&legacy_name) {
             Ok(_) => {}
             Err(_) => {
                 return Err(ArxivError::Other(format!(
                     "cache directory {} exists but cannot be removed; please delete it manually",
-                    paper_dir.display()
+                    legacy_name.display()
                 )));
             }
         }
     }
+
+    // Title is best-effort only — a failed title fetch must never block the
+    // download (P0.7). The ID-only folder carries no title (P1.2).
+    let _title = fetch_title_from_arxiv(cfg, arxiv_id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_default();
+
+    let folder_name = id_dir_name.clone();
+    let paper_dir = downloads_dir.join(&folder_name);
 
     let tar_url = cfg.arxiv_src_url(arxiv_id);
     let response = cfg.get_with_retry(&tar_url).await?;

@@ -133,10 +133,22 @@ impl Workspace {
         self.papers.iter().find(|p| p.folder_name == folder_name)
     }
 
-    /// All papers matching an ID/query (prefix matches included). Callers
-    /// must treat >1 result as an ambiguity error, never silently pick one.
+    /// All papers matching an ID/query. Exact base-ID match (version-stripped,
+    /// P1.2) wins; otherwise prefix matches are returned and callers must
+    /// treat >1 result as an ambiguity error, never silently pick one.
     pub fn find_papers_by_id(&self, arxiv_id: &str) -> Vec<&Paper> {
+        let base = crate::manifest::strip_version(arxiv_id).to_lowercase();
         let normalized = arxiv_id.replace(['.', '-'], "_").to_lowercase();
+
+        let exact: Vec<&Paper> = self
+            .papers
+            .iter()
+            .filter(|p| crate::manifest::strip_version(&p.arxiv_id).to_lowercase() == base)
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+
         self.papers
             .iter()
             .filter(|p| {
@@ -147,9 +159,7 @@ impl Workspace {
                     .collect::<Vec<_>>()
                     .join("_")
                     .to_lowercase();
-                fid == normalized
-                    || fid.starts_with(&normalized)
-                    || normalized.starts_with(&fid)
+                fid.starts_with(&normalized) || normalized.starts_with(&fid)
             })
             .collect()
     }
@@ -191,11 +201,8 @@ pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut W
                         .unwrap_or(None)
                         .unwrap_or_else(|| "unknown".to_string());
 
-                    let folder_name = format!(
-                        "{}_{}",
-                        base_id.replace('.', "_"),
-                        crate::extract::arxiv::sanitize_filename(&title)
-                    );
+                    // P1.2: canonical folder name is the base ID (no title).
+                    let folder_name = base_id.replace('.', "_");
                     let folder = workspace.path.join(&folder_name);
                     std::fs::create_dir_all(&folder)?;
 
