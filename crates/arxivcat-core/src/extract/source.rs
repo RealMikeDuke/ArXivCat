@@ -256,7 +256,7 @@ mod tests {
         // semantics); a top-level paper.tex with \documentclass wins.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("main.tex"), "section content").unwrap();
-        assert!(validate_cache(dir.path()).unwrap() == false);
+        assert!(!validate_cache(dir.path()).unwrap());
 
         std::fs::write(dir.path().join("paper.tex"), "\\documentclass{article}").unwrap();
         assert!(validate_cache(dir.path()).unwrap());

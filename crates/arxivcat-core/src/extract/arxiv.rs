@@ -182,7 +182,7 @@ mod tests {
         let long = "论".repeat(100);
         let result = sanitize_filename(&long);
         assert_eq!(result.chars().count(), 80);
-        assert_eq!(result.chars().all(|c| c == '论'), true);
+        assert!(result.chars().all(|c| c == '论'));
     }
 
     #[test]
