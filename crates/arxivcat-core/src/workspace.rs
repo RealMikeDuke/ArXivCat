@@ -37,7 +37,7 @@ impl Paper {
 
         let has_body = folder.join("body.tex").exists();
         let description_ready = has_complete_description(folder);
-        let is_complete = has_body && description_ready;
+        let is_complete = has_body;
 
         Some(Paper {
             arxiv_id,
@@ -192,13 +192,8 @@ pub async fn process_pending_paper(
     let arxiv_id = &paper.arxiv_id;
     let out_dir = workspace_path.join(&paper.folder_name);
 
-    if paper.has_body && !paper.description_ready {
-        ensure_paper_meta_files(&out_dir)?;
-        let _ = crate::chat::description::build_description(
-            &out_dir, arxiv_id, &paper.title, None, None,
-        )
-        .await;
-        return Ok(has_complete_description(&out_dir));
+    if paper.has_body {
+        return Ok(true);
     }
 
     let (paper_dir_opt, _) =
@@ -223,12 +218,7 @@ pub async fn process_pending_paper(
 
     ensure_paper_meta_files(&out_dir)?;
 
-    let _ = crate::chat::description::build_description(
-        &out_dir, arxiv_id, &paper.title, None, None,
-    )
-    .await;
-
-    Ok(out_dir.join("body.tex").exists() && has_complete_description(&out_dir))
+    Ok(out_dir.join("body.tex").exists())
 }
 
 pub fn ensure_paper_meta_files(paper_dir: &Path) -> Result<()> {
@@ -265,6 +255,9 @@ mod tests {
 
     #[test]
     fn test_paper_from_folder_pending() {
+        // New semantics (AI decoupled): is_complete == has_body.
+        // A paper with body.tex but no description is complete, and
+        // description_ready tracks the optional AI state independently.
         let dir = tempfile::tempdir().unwrap();
         let paper_dir = dir.path().join("2412_04445_Moto");
         std::fs::create_dir(&paper_dir).unwrap();
@@ -272,7 +265,8 @@ mod tests {
 
         let paper = Paper::from_folder(&paper_dir).unwrap();
         assert_eq!(paper.arxiv_id, "2412.04445");
-        assert!(!paper.is_complete);
+        assert!(paper.is_complete);
+        assert!(!paper.description_ready);
     }
 
     #[test]

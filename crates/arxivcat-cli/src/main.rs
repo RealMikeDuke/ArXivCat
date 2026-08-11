@@ -93,6 +93,9 @@ pub enum PaperCmd {
 
     #[command(about = "Show paper info and file status")]
     Info { id_or_query: String },
+
+    #[command(about = "Generate AI description for a paper (requires DeepSeek API key)")]
+    Describe { id_or_query: String },
 }
 
 #[derive(Subcommand)]
@@ -153,6 +156,9 @@ async fn main() {
             }
             PaperCmd::Info { id_or_query } => {
                 commands::paper::cmd_info(&cli, id_or_query).await
+            }
+            PaperCmd::Describe { id_or_query } => {
+                commands::paper::cmd_describe(&cli, id_or_query).await
             }
         },
         Commands::Chat { cmd } => match cmd {

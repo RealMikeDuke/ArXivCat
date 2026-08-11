@@ -255,8 +255,12 @@ We conclude.";
 
         let ws = Workspace::open(dir.path()).unwrap();
         assert_eq!(ws.papers.len(), 2);
+        // New semantics: is_complete == has_body (AI decoupled).
+        // description_ready is a separate informational state.
         assert!(ws.papers[0].is_complete);
-        assert!(!ws.papers[1].is_complete);
+        assert!(ws.papers[0].description_ready);
+        assert!(ws.papers[1].is_complete);
+        assert!(!ws.papers[1].description_ready);
     }
 
     #[test]

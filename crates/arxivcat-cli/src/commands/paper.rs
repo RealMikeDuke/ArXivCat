@@ -49,12 +49,15 @@ pub async fn cmd_list(cli: &Cli) {
     for p in &ws.papers {
         let status = if p.is_complete {
             ok("[C]")
-        } else if p.has_body {
-            warn("[P]")
         } else {
             gray("[.]")
         };
-        println!("{} {:<20} {}", status, p.arxiv_id, p.title);
+        let desc = if p.description_ready {
+            ok("desc")
+        } else {
+            gray("-")
+        };
+        println!("{} {:<20} {} [{}]", status, p.arxiv_id, p.title, desc);
     }
 }
 
@@ -111,11 +114,6 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     if let Err(e) = arxivcat_core::workspace::ensure_paper_meta_files(&output_dir) {
         eprintln!("{}: {e}", warn("warning creating meta files"));
     }
-
-    let _ = arxivcat_core::chat::description::build_description(
-        &output_dir, &arxiv_id, "", None, None,
-    )
-    .await;
 
     if !cli.json {
         println!("{}", ok("extraction complete"));
@@ -441,8 +439,6 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
         "Status:         {}",
         if paper.is_complete {
             ok("complete")
-        } else if paper.has_body {
-            warn("pending (missing description)")
         } else {
             gray("incomplete")
         }
@@ -458,6 +454,45 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
         if path.exists() {
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             println!("  {:<18} {:>8} bytes", label, size);
+        }
+    }
+}
+
+pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
+    let ws = open_ws(cli);
+    let paper = match crate::commands::find_paper(&ws, id_or_query) {
+        Some(p) => p,
+        None => {
+            eprintln!("{}: paper not found: {id_or_query}", err("error"));
+            std::process::exit(1);
+        }
+    };
+
+    match arxivcat_core::chat::description::build_description(
+        &paper.folder,
+        &paper.arxiv_id,
+        &paper.title,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(()) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "description_ready": true,
+                    })
+                );
+            } else {
+                println!("{}", ok("description generated"));
+            }
+        }
+        Err(e) => {
+            eprintln!("{}: {e}", err("description failed"));
+            std::process::exit(1);
         }
     }
 }
