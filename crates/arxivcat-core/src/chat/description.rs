@@ -46,8 +46,12 @@ pub async fn build_description(
         "arXiv ID: {arxiv_id}\nTitle: {title}\n\nPaper text snippet:\n{context}"
     );
 
+    // Reuse the configured model preference (Flash/Pro) instead of a
+    // hardcoded model (P0.14): user's chat_model choice applies to describe.
+    let model = crate::config::load_model_preference();
+    let model_id = crate::chat::deepseek::model_id(&model).unwrap_or("deepseek-v4-flash");
     let body = serde_json::json!({
-        "model": "deepseek-v4-flash",
+        "model": model_id,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg}

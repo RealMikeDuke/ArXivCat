@@ -102,14 +102,48 @@ pub fn resolve_workspace(cli: &Cli) -> Option<std::path::PathBuf> {
     None
 }
 
-pub fn find_paper(workspace: &Workspace, query: &str) -> Option<arxivcat_core::workspace::Paper> {
-    if let Some(p) = workspace.find_paper_by_id(query) {
-        return Some(p.clone());
+pub fn find_papers(workspace: &Workspace, query: &str) -> Vec<arxivcat_core::workspace::Paper> {
+    let mut found: Vec<arxivcat_core::workspace::Paper> = Vec::new();
+    for p in workspace.find_papers_by_id(query) {
+        if !found.iter().any(|f| f.folder_name == p.folder_name) {
+            found.push(p.clone());
+        }
     }
     if let Some(id) = arxivcat_core::extract::arxiv::extract_arxiv_id(query) {
-        return workspace.find_paper_by_id(&id).cloned();
+        for p in workspace.find_papers_by_id(&id) {
+            if !found.iter().any(|f| f.folder_name == p.folder_name) {
+                found.push(p.clone());
+            }
+        }
     }
-    None
+    found
+}
+
+/// Resolve a paper, dying with a clear error on not-found or ambiguity.
+/// Silent wrong-paper selection (P0.14) is never allowed.
+pub fn find_paper_or_die(cli: &Cli, workspace: &Workspace, query: &str) -> arxivcat_core::workspace::Paper {
+    let matches = find_papers(workspace, query);
+    match matches.len() {
+        0 => die(
+            cli,
+            EXIT_DATA,
+            "not_found",
+            &format!("paper not found: {query}"),
+        ),
+        1 => matches.into_iter().next().unwrap(),
+        n => {
+            let ids: Vec<String> = matches.iter().map(|p| p.arxiv_id.clone()).collect();
+            die(
+                cli,
+                EXIT_DATA,
+                "ambiguous",
+                &format!(
+                    "query '{query}' matches {n} papers: {}. Use the full arXiv ID.",
+                    ids.join(", ")
+                ),
+            )
+        }
+    }
 }
 
 #[cfg(test)]
@@ -128,50 +162,50 @@ mod tests {
     #[test]
     fn test_find_paper_direct_id() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "2501.12948");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "2501.12948");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]
     fn test_find_paper_url_abs() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "https://arxiv.org/abs/2501.12948");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "https://arxiv.org/abs/2501.12948");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]
     fn test_find_paper_url_pdf() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "https://arxiv.org/pdf/2501.12948.pdf");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "https://arxiv.org/pdf/2501.12948.pdf");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]
     fn test_find_paper_url_with_www() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "www.arxiv.org/abs/2501.12948");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "www.arxiv.org/abs/2501.12948");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]
     fn test_find_paper_url_versioned() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "https://arxiv.org/abs/2501.12948v2");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "https://arxiv.org/abs/2501.12948v2");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]
     fn test_find_paper_nonexistent() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "nonexistent");
-        assert!(p.is_none());
+        let p = find_papers(&ws, "nonexistent");
+        assert!(p.is_empty());
     }
 
     #[test]
     fn test_find_paper_url_with_whitespace() {
         let ws = make_workspace_with_paper();
-        let p = find_paper(&ws, "  https://arxiv.org/abs/2501.12948  ");
-        assert!(p.is_some());
+        let p = find_papers(&ws, "  https://arxiv.org/abs/2501.12948  ");
+        assert_eq!(p.len(), 1);
     }
 
     // ─── resolve_workspace ───

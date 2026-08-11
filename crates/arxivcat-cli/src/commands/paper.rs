@@ -217,12 +217,7 @@ fn resolve_view_file(view: &str) -> Result<&'static str, String> {
 
 pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let file = match resolve_view_file(view) {
         Ok(f) => f,
@@ -273,12 +268,7 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
 
 pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let note_path = paper.folder.join("note.txt");
 
@@ -319,12 +309,7 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
 
 pub async fn cmd_strip(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let path = paper.folder.join("body.tex");
     let content = match std::fs::read_to_string(&path) {
@@ -342,24 +327,14 @@ pub async fn cmd_strip(cli: &Cli, id_or_query: &str) {
 
 pub async fn cmd_open(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let _ = open::that(&paper.folder);
 }
 
 pub async fn cmd_pdf(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let glob_pattern = format!("{}/*.pdf", paper.folder.display());
     if let Ok(entries) = glob::glob(&glob_pattern) {
@@ -374,12 +349,7 @@ pub async fn cmd_pdf(cli: &Cli, id_or_query: &str) {
 
 pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     if cli.json {
         let body_size = std::fs::metadata(paper.folder.join("body.tex"))
@@ -443,12 +413,7 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
 
 pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,

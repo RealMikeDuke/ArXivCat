@@ -110,20 +110,29 @@ impl Workspace {
         self.papers.iter().find(|p| p.folder_name == folder_name)
     }
 
-    pub fn find_paper_by_id(&self, arxiv_id: &str) -> Option<&Paper> {
+    /// All papers matching an ID/query (prefix matches included). Callers
+    /// must treat >1 result as an ambiguity error, never silently pick one.
+    pub fn find_papers_by_id(&self, arxiv_id: &str) -> Vec<&Paper> {
         let normalized = arxiv_id.replace(['.', '-'], "_").to_lowercase();
-        self.papers.iter().find(|p| {
-            let fid = p
-                .folder_name
-                .split('_')
-                .take(2)
-                .collect::<Vec<_>>()
-                .join("_")
-                .to_lowercase();
-            fid == normalized
-                || fid.starts_with(&normalized)
-                || normalized.starts_with(&fid)
-        })
+        self.papers
+            .iter()
+            .filter(|p| {
+                let fid = p
+                    .folder_name
+                    .split('_')
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join("_")
+                    .to_lowercase();
+                fid == normalized
+                    || fid.starts_with(&normalized)
+                    || normalized.starts_with(&fid)
+            })
+            .collect()
+    }
+
+    pub fn find_paper_by_id(&self, arxiv_id: &str) -> Option<&Paper> {
+        self.find_papers_by_id(arxiv_id).into_iter().next()
     }
 
     pub fn pending_papers(&self) -> Vec<&Paper> {

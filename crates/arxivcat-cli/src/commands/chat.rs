@@ -24,12 +24,7 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
         }
     };
 
-    let paper = match crate::commands::find_paper(&ws, id_or_query) {
-        Some(p) => p,
-        None => {
-            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
-        }
-    };
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let token = config::load_cached_token();
     if token.is_none() {
