@@ -123,7 +123,6 @@ async fn title_failure_never_blocks_download_folder() {
     let tar_bytes = {
         use flate2::write::GzEncoder;
         use flate2::Compression;
-        use std::io::Write;
         let buf = std::io::Cursor::new(Vec::new());
         let mut enc = GzEncoder::new(buf, Compression::fast());
         {
