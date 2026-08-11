@@ -1,5 +1,10 @@
 # Changelog — arxivcat-core
 
+## [0.11.1] — 2026-08-12
+
+- Publish metadata: `license = "MIT"`, `repository` (packaging rehearsal clean).
+- `cargo fmt --all` applied (no behavior change).
+
 ## [0.11.0] — 2026-08-12
 
 ### Added

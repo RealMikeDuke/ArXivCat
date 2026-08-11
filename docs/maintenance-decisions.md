@@ -52,7 +52,7 @@ and must not be reintroduced — `kind` + exit code supersede it.
 - `arxivcat-cli` package **requires `arxivcat-core` to exist on crates.io**
   (cargo resolves the versioned path dependency against the index even with
   `--no-verify`). This is expected and matches the plan: **publish core first,
-  then cli**. The cli dependency pins `arxivcat-core = { version = "0.11.0" }`.
+  then cli**. The cli dependency pins `arxivcat-core = { version = "0.11.1" }`.
 - Both manifests now carry `license = "MIT"` and `repository`.
 
 Actual publishing needs a crates.io token and is a user decision.

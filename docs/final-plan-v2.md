@@ -23,7 +23,7 @@
 | 冷却窗口 | 统一 24h（manifest 记 failed_at + failure_kind；--force 绕过；单篇 download 不受限） | 3:0 |
 | CI | 从零新建一套 main-only（test + clippy -D warnings + release build） | 3:0 |
 | README | 40-60 行精简版（第 0 步放，P2 再重写）；guidebook.md 删除 | 2:1 / 3:0 |
-| 版本 | P0→0.10.0、P1→0.11.0、P2→0.12.0 | 3:0 |
+| 版本 | P0→0.10.0、P1→0.11.0、P2→0.11.1（执行修正：P2 无破坏性变更，按 semver 降为 patch 级） | 3:0 |
 
 ## 二、最终 exit code 全表（P0 门禁后冻结）
 
@@ -106,11 +106,11 @@ P0 门禁：test + clippy -D warnings + release 三连；契约测试入库；�
 
 P1 门禁：同前 + 真实 fixture 端到端迁移演练（list→info→download-all→redownload→remove）。
 
-## 七、P2（v0.12.0，打磨 + 回迁准备）
+## 七、P2（v0.11.1，打磨 + 回迁准备）
 
 - P2.1 CI 从零新建：`.github/workflows/ci.yml`，branches:[main]，paths:[crates/**, Cargo.*]，job = fmt --check + clippy -D warnings + test（含 wiremock）+ release build。
 - P2.2 GUI 回迁手册 + **实跑演练**（scratch clone → git merge legacy-gui → 适配 core API → cargo check 通过，附命令转录）。
-- P2.3 per-crate CHANGELOG（0.10.0 起）+ README 重写 + docs 术语审计（grep "src-tauri|python-legacy" = 0）。
+- P2.3 per-crate CHANGELOG（0.10.0 起，含 0.11.1 条目）+ README 重写 + docs 术语审计（grep "src-tauri|python-legacy" = 0）。
 - P2.4 repair_permissions 退役评估（一个发布周期内零触发、零 issue 才退役）。
 - P2.5 严重度/退出码文档化（9 码表入 docs/cli.md）。
 - P2.6 crates.io 发布准备：core 先发 cli 后发；path→version 依赖；`cargo publish --dry-run` 通过。

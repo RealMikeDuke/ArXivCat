@@ -1,5 +1,11 @@
 # Changelog — arxivcat-cli
 
+## [0.11.1] — 2026-08-12
+
+- Publish metadata: `license = "MIT"`, `repository`; core dep pinned
+  `0.11.1` (crates.io publish order: core first).
+- `cargo fmt --all` applied (no behavior change).
+
 ## [0.11.0] — 2026-08-12
 
 ### Added
