@@ -20,7 +20,7 @@ pub async fn download_source(
         if validate_cache(&id_dir)? {
             return Ok((Some(id_dir), Some(id_dir_name)));
         }
-        repair_permissions(&id_dir)?;
+        force_uniform_permissions(&id_dir)?;
         if validate_cache(&id_dir)? {
             return Ok((Some(id_dir), Some(id_dir_name)));
         }
@@ -55,7 +55,7 @@ pub async fn download_source(
         if validate_cache(&paper_dir)? {
             return Ok((Some(paper_dir), Some(folder_name)));
         }
-        repair_permissions(&paper_dir)?;
+        force_uniform_permissions(&paper_dir)?;
         if validate_cache(&paper_dir)? {
             return Ok((Some(paper_dir), Some(folder_name)));
         }
@@ -168,19 +168,28 @@ fn can_read_tex_files(dir: &Path) -> bool {
     true
 }
 
-fn repair_permissions(dir: &Path) -> Result<()> {
+/// Normalize permissions on a directory tree (files 0644, dirs 0755).
+///
+/// Used both right after tar extraction (prevents arXiv tar files carrying
+/// 000/0400 modes from breaking later reads) and as the legacy-cache repair
+/// path on validate failure. Symlinks are skipped: set_permissions follows
+/// symlinks, which would write through them.
+pub fn force_uniform_permissions(dir: &Path) -> Result<()> {
     let pattern = format!("{}/**/*", dir.display());
     if let Ok(entries) = glob::glob(&pattern) {
         for entry in entries.flatten() {
-            let perms = match std::fs::metadata(&entry) {
-                Ok(m) => m.permissions(),
+            let md = match std::fs::symlink_metadata(&entry) {
+                Ok(m) => m,
                 Err(_) => continue,
             };
+            if md.file_type().is_symlink() {
+                continue;
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mut perms = perms.clone();
-                if entry.is_dir() {
+                let mut perms = md.permissions();
+                if md.is_dir() {
                     perms.set_mode(0o755);
                 } else {
                     perms.set_mode(0o644);
@@ -189,7 +198,7 @@ fn repair_permissions(dir: &Path) -> Result<()> {
             }
             #[cfg(not(unix))]
             {
-                let _ = std::fs::set_permissions(&entry, perms);
+                let _ = std::fs::set_permissions(&entry, md.permissions());
             }
         }
     }
@@ -197,6 +206,13 @@ fn repair_permissions(dir: &Path) -> Result<()> {
 }
 
 fn is_safe_tar_member<R: std::io::Read>(member: &tar::Entry<'_, R>, target_dir: &Path) -> bool {
+    // Reject symlink/hardlink members outright: a name-safe path says nothing
+    // about the link target (arXiv tarballs are semi-trusted, agents are not).
+    let entry_type = member.header().entry_type();
+    if entry_type.is_symlink() || entry_type.is_hard_link() {
+        return false;
+    }
+
     let path = match member.path() {
         Ok(p) => p,
         Err(_) => return false,
@@ -236,6 +252,8 @@ fn extract_tar(tar_path: &Path, target_dir: &Path) -> Result<()> {
             .map_err(ArxivError::Io)?;
     }
 
+    force_uniform_permissions(target_dir)?;
+
     Ok(())
 }
 
@@ -272,6 +290,67 @@ mod tests {
 
         std::fs::write(dir.path().join("paper.tex"), "\\documentclass{article}").unwrap();
         assert!(validate_cache(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn extract_tar_rejects_symlink_member() {
+        // A name-safe symlink can still point outside the target: reject it.
+        let dir = tempfile::tempdir().unwrap();
+        let tgz = dir.path().join("evil.tar.gz");
+        let file = std::fs::File::create(&tgz).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("evil_link").unwrap();
+        header.set_size(0);
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_mode(0o777);
+        header.set_cksum();
+        builder
+            .append_link(&mut header, "evil_link", "/tmp/arxivcat_outside_target_marker")
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        let target = tempfile::tempdir().unwrap();
+        extract_tar(&tgz, target.path()).unwrap();
+        assert!(
+            !target.path().join("evil_link").exists(),
+            "symlink member must not be unpacked"
+        );
+        assert!(
+            !std::path::Path::new("/tmp/arxivcat_outside_target_marker").exists(),
+            "symlink target must not be touched"
+        );
+    }
+
+    #[test]
+    fn extract_tar_normalizes_bad_modes() {
+        // arXiv tarballs may carry 000/0400 modes; after extraction the tree
+        // must be readable (files 0644).
+        let dir = tempfile::tempdir().unwrap();
+        let tgz = dir.path().join("mode.tar.gz");
+        let file = std::fs::File::create(&tgz).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("locked.tex").unwrap();
+        header.set_size(4);
+        header.set_mode(0o400); // read-only, no write for owner
+        header.set_cksum();
+        builder.append(&header, b"text".as_slice()).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        let target = tempfile::tempdir().unwrap();
+        extract_tar(&tgz, target.path()).unwrap();
+        let path = target.path().join("locked.tex");
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "text");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644, "extracted file mode normalized to 0644");
+        }
     }
 
     fn make_tar_with_file(name: &str, content: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
