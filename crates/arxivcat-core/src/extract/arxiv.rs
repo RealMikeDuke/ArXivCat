@@ -120,7 +120,11 @@ pub fn parse_atom_entries(xml: &str) -> Vec<(String, String)> {
         let block = entry.as_str();
         let id = id_re.captures(block).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
         let title = title_re.captures(block).and_then(|c| c.get(1)).map(|m| {
-            m.as_str().trim().replace("  ", " ")
+            // Collapse whitespace runs (Atom titles often span indented lines).
+            Regex::new(r"\s+")
+                .unwrap()
+                .replace_all(m.as_str().trim(), " ")
+                .to_string()
         });
         if let (Some(id), Some(title)) = (id, title) {
             out.push((id, title));
