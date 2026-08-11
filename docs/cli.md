@@ -83,10 +83,10 @@ arxivcat paper pdf <ID_OR_QUERY>                 # Open PDF
 
 #### `list`
 
-Show all papers with status indicators:
-- `[C]` Complete — body + description ready
-- `[P]` Pending — has body, no description
-- `[.]` Incomplete — missing files
+Show all papers with status indicators (AI decoupled):
+- `[C]` Complete — body.tex present
+- `[.]` Incomplete — missing body.tex
+The bracket column also shows `desc`/`-` for description.md presence (informational).
 
 **JSON output**: Array of paper objects:
 ```json
@@ -95,7 +95,7 @@ Show all papers with status indicators:
 
 #### `download <ID_OR_URL>`
 
-Full pipeline: parse arXiv ID from raw ID or URL → fetch title → download source tar.gz → extract body.tex / appendix.tex → download PDF → generate AI description.
+Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → extract body.tex / appendix.tex → download PDF. AI description is NOT part of the download pipeline — use `paper describe` explicitly.
 
 **ID input**: Accepts raw IDs (`2501.12948`), versioned IDs (`2501.12948v2`), and URLs (`https://arxiv.org/abs/2501.12948`, `arxiv.org/pdf/2501.12948.pdf`, `www.arxiv.org/abs/2501.12948v3`).
 
@@ -106,7 +106,7 @@ Full pipeline: parse arXiv ID from raw ID or URL → fetch title → download so
 
 #### `download-all`
 
-Process every `[P]` paper sequentially. Skips already-complete papers.
+Process every pending paper (missing body.tex) sequentially. Skips papers that already have body.tex. AI description is not required for completion.
 
 **JSON output**: `{"status":"done","success":3,"total":5}` (or `{"status":"complete","count":0}` if nothing to do).
 
@@ -285,9 +285,41 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper download-all` | Batch status + counts |
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
+| `paper describe` | `{arxiv_id, description_ready}` |
 | `token status` | Token configured, masked, valid, response time |
 
 ---
+
+## Exit Codes & Error Contract
+
+Exit codes are **frozen** (changed only in a major breaking release). Agents
+should branch on these.
+
+| exit | category | meaning |
+|---|---|---|
+| 0 | success | command completed |
+| 1 | other | unclassified/internal error |
+| 2 | usage | clap parse error, unknown command, `--json` on a command without a JSON contract, unparseable arXiv ID |
+| 3 | network | HTTP/network failure (retryable) |
+| 4 | config | missing API key, broken config, workspace not configured |
+| 5 | data | parse/extraction/not-found/json errors, ambiguous paper query |
+| 6 | io | local filesystem/permission errors |
+| 7 | chat | DeepSeek upstream error (401/403: do not retry) |
+| 8 | partial | download-all partially succeeded (some papers failed) |
+| 130 | signal | interrupted by Ctrl-C |
+
+**Error envelope** (`--json` mode): stdout is ALWAYS exactly one JSON document.
+On failure it is:
+
+```json
+{"error": {"code": 3, "kind": "http", "message": "...", "retryable": true}}
+```
+
+`kind` ∈ io | http | parse | extraction | chat | config | not_found | json | other | usage.
+`retryable` is true for http and for chat except 401/403.
+
+**Stream discipline**: payload goes to stdout; progress/diagnostics go to
+stderr (`\r` progress is TTY-gated); human-readable errors go to stderr.
 
 ## See Also
 

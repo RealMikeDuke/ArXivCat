@@ -1,6 +1,6 @@
 [package]
 name = "arxivcat-core"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 description = "Core library for ArxivCat - arXiv paper extraction, workspace management, and chat"
 
