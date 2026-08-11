@@ -181,8 +181,9 @@ pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut W
         .map(|p| v_suffix_re.replace(&p.arxiv_id, "").to_string())
         .collect();
 
-    let mut count = 0;
-
+    // Collect new PDF IDs first so titles can be fetched in ONE export-API
+    // batch (P1.3) instead of one abs-page fetch per paper.
+    let mut new_ids: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&workspace.path) {
         for entry in entries.flatten() {
             if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
@@ -192,33 +193,36 @@ pub async fn scan_workspace_pdfs(cfg: &crate::net::HttpConfig, workspace: &mut W
             if path.extension().map(|e| e == "pdf").unwrap_or(false) {
                 if let Ok(Some(id)) = extract_arxiv_id_from_pdf(&path) {
                     let base_id = v_suffix_re.replace(&id, "").to_string();
-                    if existing_ids.contains(&base_id) {
+                    if existing_ids.contains(&base_id) || new_ids.contains(&base_id) {
                         continue;
                     }
-
-                    let title = crate::extract::arxiv::fetch_title_from_arxiv(cfg, &base_id)
-                        .await
-                        .unwrap_or(None)
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    // P1.2: canonical folder name is the base ID (no title).
-                    let folder_name = base_id.replace('.', "_");
-                    let folder = workspace.path.join(&folder_name);
-                    std::fs::create_dir_all(&folder)?;
-
-                    let _note = std::fs::File::create(folder.join("note.txt"));
-                    let _desc = std::fs::File::create(folder.join("description.md"));
-                    std::fs::create_dir_all(folder.join("arxiv_chats"))?;
-
-                    // Lazy migration (P1.1): write the manifest immediately so
-                    // the folder is canonical on next open.
-                    let _ = crate::manifest::refresh_manifest(&folder, &base_id, &title);
-
-                    existing_ids.insert(base_id);
-                    count += 1;
+                    new_ids.push(base_id);
                 }
             }
         }
+    }
+
+    let titles = crate::extract::arxiv::fetch_titles_batch(cfg, &new_ids).await;
+
+    let mut count = 0;
+    for base_id in &new_ids {
+        let title = titles.get(base_id).cloned().unwrap_or_default();
+
+        // P1.2: canonical folder name is the base ID (no title).
+        let folder_name = base_id.replace('.', "_");
+        let folder = workspace.path.join(&folder_name);
+        std::fs::create_dir_all(&folder)?;
+
+        let _note = std::fs::File::create(folder.join("note.txt"));
+        let _desc = std::fs::File::create(folder.join("description.md"));
+        std::fs::create_dir_all(folder.join("arxiv_chats"))?;
+
+        // Lazy migration (P1.1): write the manifest immediately so the
+        // folder is canonical on next open.
+        let _ = crate::manifest::refresh_manifest(&folder, base_id, &title);
+
+        existing_ids.insert(base_id.clone());
+        count += 1;
     }
 
     workspace.refresh();

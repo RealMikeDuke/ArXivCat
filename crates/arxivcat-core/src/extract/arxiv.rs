@@ -69,12 +69,64 @@ pub async fn fetch_title_from_arxiv(cfg: &crate::net::HttpConfig, arxiv_id: &str
 
     let html = response.text().await?;
 
-    let re = Regex::new(r#"<meta property="og:title" content="([^"]+)""#)
+    let re = Regex::new(r#"<meta property="og:title" content="([^"]+)" "#)
         .map_err(|e| ArxivError::Other(e.to_string()))?;
 
     Ok(re.captures(&html).and_then(|c| c.get(1)).map(|m| {
         m.as_str().to_string()
     }))
+}
+
+/// Batch-fetch titles via the export API (`/api/query?id_list=`, Atom).
+/// Best-effort: any failure returns an empty map (callers fall back to
+/// empty titles); the download pipeline never blocks on titles (P0.7).
+pub async fn fetch_titles_batch(
+    cfg: &crate::net::HttpConfig,
+    ids: &[String],
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    if ids.is_empty() {
+        return out;
+    }
+    // arXiv export API: 1 request per 3s rate limit; chunk conservatively.
+    for chunk in ids.chunks(50) {
+        let id_list = chunk.join(",");
+        let url = format!("{}/api/query?id_list={}", cfg.arxiv_base, id_list);
+        let response = match cfg.get_with_retry(&url).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let text = match response.text().await {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        for (id, title) in parse_atom_entries(&text) {
+            out.insert(id, title);
+        }
+        // Respect the 3s rate limit between export API calls.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+    out
+}
+
+/// Parse `<entry><id>...abs/2501.12948</id><title>...</title></entry>` blocks.
+/// Exposed for unit tests.
+pub fn parse_atom_entries(xml: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let entry_re = Regex::new(r"<entry>.*?</entry>").unwrap();
+    let id_re = Regex::new(r"<id>.*?/abs/(\d{4}\.\d{4,5}(?:v\d+)?)</id>").unwrap();
+    let title_re = Regex::new(r"<title>(.*?)</title>").unwrap();
+    for entry in entry_re.find_iter(xml) {
+        let block = entry.as_str();
+        let id = id_re.captures(block).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
+        let title = title_re.captures(block).and_then(|c| c.get(1)).map(|m| {
+            m.as_str().trim().replace("  ", " ")
+        });
+        if let (Some(id), Some(title)) = (id, title) {
+            out.push((id, title));
+        }
+    }
+    out
 }
 
 pub fn sanitize_filename(name: &str) -> String {
