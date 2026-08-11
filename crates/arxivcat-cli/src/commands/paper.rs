@@ -15,8 +15,7 @@ fn get_ws(cli: &Cli) -> PathBuf {
     match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            eprintln!("{}", err("error: no workspace configured"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
         }
     }
 }
@@ -26,8 +25,7 @@ fn open_ws(cli: &Cli) -> Workspace {
     match Workspace::open(&path) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("{}: {}", err("error opening workspace"), e);
-            std::process::exit(1);
+            crate::commands::die_err(cli, &e);
         }
     }
 }
@@ -68,12 +66,11 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     let arxiv_id = match arxivcat_core::extract::arxiv::extract_arxiv_id(id_or_url) {
         Some(id) => id,
         None => {
-            eprintln!("{}: could not extract arXiv ID from input", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "could not extract arXiv ID from input");
         }
     };
 
-    println!("{} downloading {}...", gray("..."), arxiv_id);
+    eprintln!("downloading {arxiv_id}...");
 
     let downloads_dir = config::get_downloads_dir();
 
@@ -81,16 +78,14 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
         match arxivcat_core::extract::source::download_source(&arxiv_id, &downloads_dir).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("{}: {e}", err("download failed"));
-                std::process::exit(1);
+                crate::commands::die_err(cli, &e);
             }
         };
 
     let paper_dir = match paper_dir_opt {
         Some(d) => d,
         None => {
-            eprintln!("{}: source download returned None", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "data", "source download returned None");
         }
     };
 
@@ -104,8 +99,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
         match arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &output_dir) {
             Ok(o) => o,
             Err(e) => {
-                eprintln!("{}: {e}", err("extraction failed"));
-                std::process::exit(1);
+                crate::commands::die_err(cli, &e);
             }
         };
 
@@ -142,18 +136,13 @@ pub async fn cmd_download_all(cli: &Cli) {
 
     let pending = ws.pending_papers();
     if pending.is_empty() {
-        println!("{}", ok("all papers complete"));
         if cli.json {
             println!("{}", serde_json::json!({"status": "complete", "count": 0}));
         }
         return;
     }
 
-    println!(
-        "{} downloading {} pending papers...",
-        gray("..."),
-        pending.len()
-    );
+    eprintln!("downloading {} pending papers...", pending.len());
 
     let downloads_dir = config::get_downloads_dir();
     let cancel_flag = std::sync::atomic::AtomicBool::new(false);
@@ -166,11 +155,11 @@ pub async fn cmd_download_all(cli: &Cli) {
             break;
         }
 
-        print!(
+        eprint!(
             "\r[{}/{}] {} ...",
             i + 1,
             total,
-            gray(paper.arxiv_id.as_str())
+            paper.arxiv_id
         );
 
         match arxivcat_core::workspace::process_pending_paper(
@@ -191,14 +180,7 @@ pub async fn cmd_download_all(cli: &Cli) {
     }
 }
 
-    println!();
-    println!(
-        "{} {}/{} papers processed successfully",
-        ok("done"),
-        success,
-        total
-    );
-
+    eprintln!();
     if cli.json {
         println!(
             "{}",
@@ -225,16 +207,14 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
     let file = match resolve_view_file(view) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{}: {e}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", &e);
         }
     };
 
@@ -273,8 +253,7 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
             println!("{content}");
         }
         Err(e) => {
-            eprintln!("{}: {e}", err("error reading file"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
         }
     }
 }
@@ -284,8 +263,7 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -301,12 +279,10 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
-                eprintln!("{}: editor exited with {}", err("error"), s);
-                std::process::exit(1);
+                crate::commands::die(cli, crate::commands::EXIT_OTHER, "other", &format!("editor exited with {s}"));
             }
             Err(e) => {
-                eprintln!("{}: failed to launch editor '{editor}': {e}", err("error"));
-                std::process::exit(1);
+                crate::commands::die(cli, crate::commands::EXIT_OTHER, "other", &format!("failed to launch editor '{editor}': {e}"));
             }
         }
     } else if !text.is_empty() {
@@ -317,8 +293,7 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
                 }
             }
             Err(e) => {
-                eprintln!("{}: {e}", err("error saving note"));
-                std::process::exit(1);
+                crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
             }
         }
     } else {
@@ -334,8 +309,7 @@ pub async fn cmd_strip(cli: &Cli, id_or_query: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -343,8 +317,7 @@ pub async fn cmd_strip(cli: &Cli, id_or_query: &str) {
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{}: {e}", err("error reading body.tex"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
         }
     };
 
@@ -359,8 +332,7 @@ pub async fn cmd_open(cli: &Cli, id_or_query: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -372,8 +344,7 @@ pub async fn cmd_pdf(cli: &Cli, id_or_query: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -393,8 +364,7 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -463,8 +433,7 @@ pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("{}: paper not found: {id_or_query}", err("error"));
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
@@ -491,8 +460,7 @@ pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
             }
         }
         Err(e) => {
-            eprintln!("{}: {e}", err("description failed"));
-            std::process::exit(1);
+            crate::commands::die_err(cli, &e);
         }
     }
 }

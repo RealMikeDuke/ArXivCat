@@ -1,7 +1,7 @@
 use arxivcat_core::config;
 use crate::Cli;
 
-pub async fn cmd_status(_cli: &Cli) {
+pub async fn cmd_status(cli: &Cli) {
     let token = config::load_cached_token();
     match token {
         Some(t) => {
@@ -10,15 +10,69 @@ pub async fn cmd_status(_cli: &Cli) {
             } else {
                 "***".to_string()
             };
+            if cli.json {
+                // docs/cli.md contract: {"configured","masked","response_time_ms","valid"}
+                match validate_token_inner(&t).await {
+                    Ok((true, elapsed_ms)) => {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "configured": true,
+                                "masked": masked,
+                                "response_time_ms": elapsed_ms,
+                                "valid": true,
+                            })
+                        );
+                    }
+                    Ok((false, elapsed_ms)) => {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "configured": true,
+                                "masked": masked,
+                                "response_time_ms": elapsed_ms,
+                                "valid": false,
+                            })
+                        );
+                    }
+                    Err(e) => {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "configured": true,
+                                "masked": masked,
+                                "response_time_ms": serde_json::Value::Null,
+                                "valid": false,
+                                "error": e,
+                            })
+                        );
+                    }
+                }
+                return;
+            }
             println!("token configured: {masked}");
 
             match validate_token_inner(&t).await {
-                Ok(true) => println!("status: valid"),
-                Ok(false) => println!("status: invalid"),
+                Ok((true, elapsed_ms)) => {
+                    println!("status: valid ({elapsed_ms}ms)");
+                }
+                Ok((false, _)) => println!("status: invalid"),
                 Err(e) => println!("status: could not validate ({e})"),
             }
         }
         None => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "configured": false,
+                        "masked": serde_json::Value::Null,
+                        "response_time_ms": serde_json::Value::Null,
+                        "valid": false,
+                    })
+                );
+                return;
+            }
             println!("no token configured");
             println!("set with: arxivcat token set");
             println!("or set DEEPSEEK_API_KEY environment variable");
@@ -33,48 +87,42 @@ pub async fn cmd_set(_cli: &Cli) {
     io::stdout().flush().ok();
     let mut token = String::new();
     if io::stdin().read_line(&mut token).is_err() {
-        eprintln!("error reading input");
-        std::process::exit(1);
+        crate::commands::die(_cli, crate::commands::EXIT_IO, "io", "error reading input");
     }
     let token = token.trim().to_string();
     if token.is_empty() {
-        eprintln!("error: token cannot be empty");
-        std::process::exit(1);
+        crate::commands::die(_cli, crate::commands::EXIT_USAGE, "usage", "token cannot be empty");
     }
 
     match config::save_token(&token) {
         Ok(()) => println!("token saved"),
         Err(e) => {
-            eprintln!("error saving token: {e}");
-            std::process::exit(1);
+            crate::commands::die(_cli, crate::commands::EXIT_IO, "io", &e.to_string());
         }
     }
 }
 
-pub async fn cmd_validate(_cli: &Cli) {
+pub async fn cmd_validate(cli: &Cli) {
     let token = config::load_cached_token();
     let token = match token {
         Some(t) => t,
         None => {
-            eprintln!("error: no token configured");
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no token configured");
         }
     };
 
     match validate_token_inner(&token).await {
-        Ok(true) => println!("token is valid"),
-        Ok(false) => {
-            eprintln!("token is invalid");
-            std::process::exit(1);
+        Ok((true, elapsed_ms)) => println!("token is valid ({elapsed_ms}ms)"),
+        Ok((false, _)) => {
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "token is invalid");
         }
         Err(e) => {
-            eprintln!("validation error: {e}");
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", &format!("validation error: {e}"));
         }
     }
 }
 
-async fn validate_token_inner(token: &str) -> Result<bool, String> {
+async fn validate_token_inner(token: &str) -> Result<(bool, u64), String> {
     let start = std::time::Instant::now();
     let client = reqwest::Client::new();
     let response = match client
@@ -94,10 +142,10 @@ async fn validate_token_inner(token: &str) -> Result<bool, String> {
     };
 
     let elapsed = start.elapsed();
+    let elapsed_ms = (elapsed.as_secs_f64() * 1000.0).round() as u64;
 
     if response.status().is_success() {
-        println!("response time: {:.0}ms", elapsed.as_secs_f64() * 1000.0);
-        return Ok(true);
+        return Ok((true, elapsed_ms));
     }
 
     let msg = match response.status().as_u16() {

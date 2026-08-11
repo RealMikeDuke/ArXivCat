@@ -121,7 +121,40 @@ pub enum TokenCmd {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            match e.kind() {
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                    e.print().ok();
+                    std::process::exit(0);
+                }
+                _ => {
+                    // Usage errors exit 2 (clap-aligned, POSIX convention).
+                    // With --json, emit the error envelope on stdout so stdout
+                    // stays a single JSON document for machine consumers.
+                    let argv_has_json = std::env::args().any(|a| a == "--json");
+                    if argv_has_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "error": {
+                                    "code": 2,
+                                    "kind": "usage",
+                                    "message": e.to_string(),
+                                    "retryable": false,
+                                }
+                            })
+                        );
+                    } else {
+                        e.print().ok();
+                    }
+                    std::process::exit(2);
+                }
+            }
+        }
+    };
 
     match &cli.command {
         Commands::Workspace { cmd } => match cmd {

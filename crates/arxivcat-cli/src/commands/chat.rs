@@ -7,34 +7,33 @@ use owo_colors::OwoColorize;
 fn gray(s: &str) -> String { s.dimmed().to_string() }
 
 pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
+    if cli.json {
+        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "--json is not supported for chat commands");
+    }
     let ws_path = match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            eprintln!("error: no workspace configured");
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
         }
     };
 
     let ws = match arxivcat_core::workspace::Workspace::open(&ws_path) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("error opening workspace: {e}");
-            std::process::exit(1);
+            crate::commands::die_err(cli, &e);
         }
     };
 
     let paper = match crate::commands::find_paper(&ws, id_or_query) {
         Some(p) => p,
         None => {
-            eprintln!("error: paper not found: {id_or_query}");
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &format!("paper not found: {id_or_query}"));
         }
     };
 
     let token = config::load_cached_token();
     if token.is_none() {
-        eprintln!("error: no API token configured. use 'arxivcat token set'");
-        std::process::exit(1);
+        crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no API token configured. use 'arxivcat token set'");
     }
 
     println!("{} {}", gray("Side chat — paper:"), paper.arxiv_id);
@@ -261,26 +260,26 @@ pub async fn cmd_side(cli: &Cli, id_or_query: &str) {
 }
 
 pub async fn cmd_global(cli: &Cli) {
+    if cli.json {
+        crate::commands::die(cli, crate::commands::EXIT_USAGE, "usage", "--json is not supported for chat commands");
+    }
     let ws_path = match crate::commands::resolve_workspace(cli) {
         Some(p) => p,
         None => {
-            eprintln!("error: no workspace configured");
-            std::process::exit(1);
+            crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no workspace configured");
         }
     };
 
     let ws = match arxivcat_core::workspace::Workspace::open(&ws_path) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("error opening workspace: {e}");
-            std::process::exit(1);
+            crate::commands::die_err(cli, &e);
         }
     };
 
     let token = config::load_cached_token();
     if token.is_none() {
-        eprintln!("error: no API token configured. use 'arxivcat token set'");
-        std::process::exit(1);
+        crate::commands::die(cli, crate::commands::EXIT_CONFIG, "config", "no API token configured. use 'arxivcat token set'");
     }
 
     let chat_dir = ws_path.join("arxivcat_global_chats");
