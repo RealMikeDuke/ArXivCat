@@ -430,6 +430,13 @@ pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
     .await
     {
         Ok(()) => {
+            // Lazy migration (P1.1): describe is a write-path command; refresh
+            // the manifest so description_ready is durable.
+            let _ = arxivcat_core::manifest::refresh_manifest(
+                &paper.folder,
+                &paper.arxiv_id,
+                &paper.title,
+            );
             if cli.json {
                 println!(
                     "{}",
