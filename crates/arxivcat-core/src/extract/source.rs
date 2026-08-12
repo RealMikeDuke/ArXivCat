@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{ArxivError, Result};
-use crate::extract::arxiv::fetch_title_from_arxiv;
 use crate::net::HttpConfig;
 
 /// Cross-process download lock (P1.7): a lock file per base ID under
@@ -11,17 +10,60 @@ struct DownloadLock {
 }
 
 impl DownloadLock {
+    /// Lock files older than this are considered stale (crashed process) and
+    /// reclaimed.
+    const STALE_AFTER_SECS: u64 = 10 * 60;
+
     fn acquire(downloads_dir: &Path, id_dir_name: &str) -> Result<Self> {
         let lock_dir = downloads_dir.join(".locks");
         std::fs::create_dir_all(&lock_dir)?;
         let path = lock_dir.join(format!("{id_dir_name}.lock"));
-        if path.exists() {
-            return Err(ArxivError::Other(format!(
-                "another process is already downloading {id_dir_name}"
-            )));
+
+        // Atomic O_EXCL create — check-then-act would let two processes
+        // through simultaneously (TOCTOU). Lock content = unix ms.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        match options.open(&path) {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = f.write_all(now_ms.to_string().as_bytes());
+                Ok(Self { path })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Stale recovery: a crashed process left the lock behind.
+                let stale = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map(|t| {
+                        t.elapsed()
+                            .map(|d| d.as_secs() > Self::STALE_AFTER_SECS)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                    let mut options = std::fs::OpenOptions::new();
+                    options.write(true).create_new(true);
+                    return match options.open(&path) {
+                        Ok(mut f) => {
+                            use std::io::Write;
+                            let _ = f.write_all(now_ms.to_string().as_bytes());
+                            Ok(Self { path })
+                        }
+                        Err(_) => Err(ArxivError::Other(format!(
+                            "another process is already downloading {id_dir_name}"
+                        ))),
+                    };
+                }
+                Err(ArxivError::Other(format!(
+                    "another process is already downloading {id_dir_name}"
+                )))
+            }
+            Err(e) => Err(ArxivError::Io(e)),
         }
-        std::fs::write(&path, "")?;
-        Ok(Self { path })
     }
 }
 
@@ -101,13 +143,8 @@ pub async fn download_source(
         }
     }
 
-    // Title is best-effort only — a failed title fetch must never block the
-    // download (P0.7). The ID-only folder carries no title (P1.2).
-    let _title = fetch_title_from_arxiv(cfg, arxiv_id)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default();
-
+    // P1.2: ID-only folders carry no title, so there is nothing to fetch
+    // here — the previous best-effort abs-page request was dead work.
     let folder_name = id_dir_name.clone();
     let paper_dir = downloads_dir.join(&folder_name);
 
@@ -118,10 +155,13 @@ pub async fn download_source(
     let response = cfg.get_with_retry(&tar_url).await?;
 
     if !response.status().is_success() {
-        return Err(ArxivError::Other(format!(
-            "failed to download source: HTTP {}",
-            response.status()
-        )));
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(ArxivError::NotFound(format!(
+                "paper source not found on arXiv: HTTP {status}"
+            )));
+        }
+        return Err(ArxivError::HttpStatus(status.as_u16()));
     }
 
     // P1.8: unique temp tar name (pid+ts) so concurrent runs never collide
@@ -216,9 +256,8 @@ fn can_read_tex_files(dir: &Path) -> bool {
     };
 
     for entry in entries.flatten() {
-        if std::fs::read_to_string(&entry).is_err() {
-            return false;
-        }
+        // Lossy read: legacy latin-1 papers must not invalidate the cache.
+        let _ = crate::extract::tex::read_to_string_lossy(&entry);
     }
     true
 }

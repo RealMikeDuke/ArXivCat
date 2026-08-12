@@ -76,11 +76,14 @@ async fn gives_up_after_max_retries_on_persistent_429() {
         .await;
 
     let cfg = test_cfg(&server).await;
-    let resp = cfg
+    let err = cfg
         .get_with_retry(&format!("{}/src/9999.00000", server.uri()))
         .await
-        .unwrap();
-    assert_eq!(resp.status(), 429, "must stop retrying and surface the 429");
+        .expect_err("persistent 429 must surface as an error after retry exhaustion");
+    match err {
+        arxivcat_core::error::ArxivError::HttpStatus(429) => {}
+        other => panic!("expected HttpStatus(429), got {other:?}"),
+    }
 }
 
 #[tokio::test]

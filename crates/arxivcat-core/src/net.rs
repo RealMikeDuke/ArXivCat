@@ -26,7 +26,7 @@ impl HttpConfig {
     pub fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
             .user_agent(format!(
-                "arxivcat/{} (+https://github.com/ArXivCat)",
+                "arxivcat/{} (+https://github.com/RealMikeDuke/ArXivCat)",
                 env!("CARGO_PKG_VERSION")
             ))
             .build()
@@ -86,16 +86,22 @@ impl HttpConfig {
             match self.client.get(url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
-                    if !Self::is_retryable_status(status) || attempt >= self.max_retries {
+                    if Self::is_retryable_status(status) {
+                        if attempt >= self.max_retries {
+                            // Frozen contract: after retry exhaustion a 429/5xx
+                            // is exit 3 / kind http / retryable true — NOT other.
+                            return Err(ArxivError::HttpStatus(status.as_u16()));
+                        }
+                        let retry_after = resp
+                            .headers()
+                            .get(reqwest::header::RETRY_AFTER)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<u64>().ok());
+                        self.backoff_wait(attempt, retry_after).await;
+                        attempt += 1;
+                    } else {
                         return Ok(resp);
                     }
-                    let retry_after = resp
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| v.parse::<u64>().ok());
-                    self.backoff_wait(attempt, retry_after).await;
-                    attempt += 1;
                 }
                 Err(e) => {
                     let retryable =

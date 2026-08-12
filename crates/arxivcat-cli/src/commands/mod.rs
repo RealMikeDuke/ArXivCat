@@ -26,7 +26,7 @@ pub fn exit_code_for(err: &ArxivError) -> i32 {
     use ArxivError::*;
     match err {
         Io(_) => EXIT_IO,
-        Http(_) => EXIT_NETWORK,
+        Http(_) | HttpStatus(_) => EXIT_NETWORK,
         Parse(_) | Extraction(_) | NotFound(_) | Json(_) => EXIT_DATA,
         Chat(_) => EXIT_CHAT,
         Config(_) => EXIT_CONFIG,
@@ -38,7 +38,7 @@ pub fn kind_for(err: &ArxivError) -> &'static str {
     use ArxivError::*;
     match err {
         Io(_) => "io",
-        Http(_) => "http",
+        Http(_) | HttpStatus(_) => "http",
         Parse(_) => "parse",
         Extraction(_) => "extraction",
         Chat(_) => "chat",

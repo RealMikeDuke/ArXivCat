@@ -2,6 +2,14 @@ use crate::Cli;
 use arxivcat_core::config;
 
 pub async fn cmd_open(cli: &Cli, path: &std::path::Path) {
+    if cli.json {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for workspace open",
+        );
+    }
     if !path.exists() {
         crate::commands::die(
             cli,

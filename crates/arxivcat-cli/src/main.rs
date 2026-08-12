@@ -68,7 +68,7 @@ pub enum PaperCmd {
     DownloadAll {
         /// Number of parallel downloads (1-8). Bound to the 429 retry/backoff
         /// contract: raising jobs without backoff is not allowed.
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=8))]
         jobs: u8,
 
         /// Ignore the 24h per-paper retry cooldown.

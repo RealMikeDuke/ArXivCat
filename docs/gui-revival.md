@@ -5,17 +5,22 @@ The GUI lives in full on the `legacy-gui` branch (tag `v0.9.1-gui`); main is
 the pure-CLI project. Reviving the GUI is a normal branch merge + a bounded
 core-API adaptation — NOT a rewrite and NOT a cross-repo reconciliation.
 
-## 1. Merge
+## 1. Restore the GUI files (IMPORTANT — not a branch merge)
+
+`legacy-gui` is an *ancestor* of `main` (created before the pruning commit, and
+kept unchanged since), so `git merge legacy-gui` is a **no-op** — it will not
+bring any GUI code back. The correct procedure is a file-level restore from
+the archive tag:
 
 ```bash
-git checkout main
-git merge legacy-gui        # or: git merge v0.9.1-gui
+git restore --source=v0.9.1-gui --   src/ src-tauri/ android-app/ python-legacy/ performance_profiling/   assets/ package.json package-lock.json index.html tsconfig.json   vite.config.ts README_zh.md docs/archive/ docs/conventions.md   CHANGELOG.md opencode.json
 ```
 
-Text conflicts are expected in exactly three places:
-- root `Cargo.toml` — `members` must re-add `src-tauri` (and its deps)
-- `Cargo.lock`
-- `README.md` (GUI-era README vs CLI-only README)
+Then re-add the GUI crates by hand:
+- root `Cargo.toml` — `members` must re-add `src-tauri` (and its workspace
+  dependencies, which were pruned)
+- `Cargo.lock` — regenerate with `cargo build`
+- `README.md` — replace CLI-only README with the GUI-era one (or keep both)
 
 ## 2. Core-API adaptation checklist (bounded)
 
@@ -60,5 +65,6 @@ compatible in both directions.
 
 ## 5. Rollback
 
-If the GUI is not actually coming back: `git merge --abort` (or reset) —
-main remains the pure-CLI project. The branch/tag are permanent archives.
+If the GUI is not actually coming back: `git restore --source=main -- <paths>`
+(or `git reset`), and `git clean -fd` to drop untracked GUI files. The
+branch/tag are permanent archives — nothing is ever lost.

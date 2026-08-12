@@ -136,6 +136,10 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
         eprintln!("{}: {e}", warn("warning creating meta files"));
     }
 
+    // Single-download must also write the manifest (P1.1 write-path rule).
+    // Title comes from a future export-API fetch; keep any existing value.
+    let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, "");
+
     if !cli.json {
         println!("{}", ok("extraction complete"));
         println!("arxiv ID: {}", &arxiv_id);
@@ -193,16 +197,17 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
 
     if pending.is_empty() {
         if cli.json {
-            let mut v = serde_json::json!({
-                "status": "done",
-                "total": 0,
-                "success": 0,
-                "failed": 0,
-                "skipped": skipped.len(),
-                "failures": [],
-            });
-            v["skipped_ids"] = serde_json::json!(skipped);
-            println!("{}", v);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "done",
+                    "total": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "skipped": skipped.len(),
+                    "failures": [],
+                })
+            );
         }
         return;
     }
@@ -270,7 +275,14 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
                     let code = crate::commands::exit_code_for(&e);
                     let kind = crate::commands::kind_for(&e);
                     let msg = e.to_string();
-                    // persist 24h cooldown (P1.4)
+                    // Keep the paper's identity in the manifest first, then
+                    // arm the 24h cooldown (C2: legacy folders must not get
+                    // an empty-ID paper.json on failure).
+                    let _ = arxivcat_core::manifest::refresh_manifest(
+                        &paper.folder,
+                        &paper.arxiv_id,
+                        &paper.title,
+                    );
                     let _ = arxivcat_core::manifest::mark_failure(&paper.folder, &msg);
                     eprintln!("{} failed: {msg}", paper.arxiv_id);
                     failures.push(serde_json::json!({
@@ -382,6 +394,14 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
 }
 
 pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
+    if cli.json {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for paper note",
+        );
+    }
     let ws = open_ws(cli);
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
@@ -419,7 +439,7 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
                 }
             }
             Err(e) => {
-                crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
+                crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &e.to_string());
             }
         }
     } else {
@@ -431,6 +451,14 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
 }
 
 pub async fn cmd_strip(cli: &Cli, id_or_query: &str) {
+    if cli.json {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for paper strip",
+        );
+    }
     let ws = open_ws(cli);
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
@@ -617,7 +645,14 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
         paper.folder_name
     ));
     let _ = std::fs::create_dir_all(&backup);
-    for name in ["note.txt", "description.md", "arxiv_chats"] {
+    // .description_ready must be preserved too, else redownload silently
+    // loses the description_ready state (P1.5 regression).
+    for name in [
+        "note.txt",
+        "description.md",
+        "arxiv_chats",
+        ".description_ready",
+    ] {
         let src = folder.join(name);
         if src.exists() {
             let _ = std::fs::rename(&src, backup.join(name));
@@ -657,11 +692,21 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     }
     .await;
 
-    // Restore metadata even on failure.
-    for name in ["note.txt", "description.md", "arxiv_chats"] {
+    // Restore metadata even on failure. Recreate the folder first so a
+    // failed download (folder removed) still gets its meta back; remove
+    // freshly-created stubs before restoring real content.
+    let _ = std::fs::create_dir_all(&folder);
+    for name in [
+        "note.txt",
+        "description.md",
+        "arxiv_chats",
+        ".description_ready",
+    ] {
         let src = backup.join(name);
         if src.exists() {
-            let _ = std::fs::rename(&src, folder.join(name));
+            let dst = folder.join(name);
+            let _ = std::fs::remove_dir_all(&dst); // drop stub created by ensure_*
+            let _ = std::fs::rename(&src, dst);
         }
     }
     let _ = std::fs::remove_dir_all(&backup);

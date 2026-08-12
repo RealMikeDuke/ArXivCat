@@ -64,6 +64,19 @@ impl PaperManifest {
     }
 }
 
+/// Parse `{id1}_{id2}_..._{title}` (or ID-only `{id1}_{id2}`) from a folder
+/// name, mirroring `Paper::from_folder`'s legacy fallback.
+pub fn parse_legacy_folder(folder_name: &str) -> (String, String) {
+    let parts: Vec<&str> = folder_name.split('_').collect();
+    if parts.len() >= 2 && parts[0].chars().all(|c| c.is_ascii_digit()) {
+        let arxiv_id = format!("{}.{}", parts[0], parts[1]);
+        let title = parts[2..].join(" ");
+        (arxiv_id, title)
+    } else {
+        (String::new(), String::new())
+    }
+}
+
 /// Strip the version suffix from an arXiv ID: `2501.12948v2` -> `2501.12948`.
 /// No-op when there is no `v<N>` suffix.
 pub fn strip_version(id: &str) -> String {
@@ -90,11 +103,13 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         }
     };
 
+    let base_id = strip_version(arxiv_id);
     let files = ManifestFiles {
         body: file_opt("body.tex"),
         appendix: file_opt("appendix.tex"),
         note: file_opt("note.txt"),
-        pdf: file_opt("paper.pdf"),
+        // download_pdf writes `{arxiv_id}.pdf` (never paper.pdf).
+        pdf: file_opt(&format!("{base_id}.pdf")),
         description: file_opt("description.md"),
     };
 
@@ -105,7 +120,11 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         schema: 1,
         arxiv_id: arxiv_id.to_string(),
         base_id: strip_version(arxiv_id),
-        title: title.to_string(),
+        title: if title.is_empty() {
+            prev.as_ref().map(|m| m.title.clone()).unwrap_or_default()
+        } else {
+            title.to_string()
+        },
         downloaded_at: prev
             .as_ref()
             .map(|m| m.downloaded_at.clone())
@@ -138,13 +157,18 @@ pub fn mark_failure(paper_dir: &Path, error: &str) -> Result<()> {
     let mut m = match PaperManifest::load(paper_dir)? {
         Some(m) => m,
         None => {
-            // Unknown paper dir: create a minimal manifest so the cooldown
-            // survives across runs.
+            // Unknown paper dir: derive the ID from the folder name so a
+            // legacy {id}_{title} folder never loses its identity (C2).
+            let folder_name = paper_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let (arxiv_id, title) = parse_legacy_folder(&folder_name);
             PaperManifest {
                 schema: 1,
-                arxiv_id: String::new(),
-                base_id: String::new(),
-                title: String::new(),
+                arxiv_id: arxiv_id.clone(),
+                base_id: strip_version(&arxiv_id),
+                title,
                 downloaded_at: String::new(),
                 files: ManifestFiles::default(),
                 description_ready: false,

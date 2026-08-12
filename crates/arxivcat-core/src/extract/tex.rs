@@ -10,10 +10,9 @@ pub fn find_main_tex(paper_dir: &Path) -> Option<PathBuf> {
     // otherwise a section file named main.tex would be mis-selected.
     let main_candidate = paper_dir.join("main.tex");
     if main_candidate.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&main_candidate) {
-            if content.contains("\\documentclass") {
-                return Some(main_candidate);
-            }
+        let content = read_to_string_lossy(&main_candidate);
+        if content.contains("\\documentclass") {
+            return Some(main_candidate);
         }
     }
 

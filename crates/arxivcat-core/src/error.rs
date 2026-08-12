@@ -8,6 +8,11 @@ pub enum ArxivError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Non-2xx status after retry exhaustion (429/5xx). Maps to exit 3 /
+    /// kind http / retryable true per the frozen contract.
+    #[error("HTTP status {0}")]
+    HttpStatus(u16),
+
     #[error("Parse error: {0}")]
     Parse(String),
 

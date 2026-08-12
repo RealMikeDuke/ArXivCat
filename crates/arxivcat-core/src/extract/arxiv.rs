@@ -6,7 +6,9 @@ pub fn extract_arxiv_id(input: &str) -> Option<String> {
     // New-style arXiv IDs only: YYMM.NNNNN (4+4/5 digits). Tightened from the
     // loose \d+[._]\d+ which mis-matched DOIs (10.48550) and dates. Old-style
     // IDs (hep-th/9901001) are intentionally unsupported (documented).
-    let re = Regex::new(r"(\d{4}[._]\d{4,5}(?:v\d+)?)").ok()?;
+    // \b anchors both ends: "202501.129483" must NOT match "2501.12948"
+    // (a digit before/after the candidate breaks the boundary).
+    let re = Regex::new(r"\b(\d{4}[._]\d{4,5}(?:v\d+)?)\b").ok()?;
     re.captures(input)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().replace('_', "."))

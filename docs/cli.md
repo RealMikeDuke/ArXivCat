@@ -115,7 +115,6 @@ Exit codes: 0 all succeeded / 8 partial (some failed) / 1 all failed / 130 inter
 {"status":"done|partial|failed|cancelled","total":3,"success":2,"failed":1,"skipped":0,"failures":[{"id":"2501.12948","code":3,"kind":"http","message":"...","retryable":true}]}
 ```
 
-**JSON output**: `{"status":"done","success":3,"total":5}` (or `{"status":"complete","count":0}` if nothing to do).
 
 #### `preview <ID_OR_QUERY>`
 
@@ -236,16 +235,15 @@ Each paper is stored as a folder under the workspace root:
 
 ```
 workspace/
-├── 2501_12948_DeepSeek-R1_Incentivizing_Reasoning/
+├── 2501_12948/               # ID-only folder name (P1.2)
+│   ├── paper.json           # Manifest: single source of truth
 │   ├── body.tex              # Main content (LaTeX, comments stripped)
 │   ├── appendix.tex          # Appendix content (if any)
 │   ├── note.txt              # User notes
 │   ├── description.md        # AI-generated description
 │   ├── 2501.12948.pdf        # Downloaded PDF
-│   ├── .description_ready     # Flag file marking completion
 │   └── arxiv_chats/          # Saved chat sessions
-├── 1706_03762_Attention_Is_All_You_Need/
-├── 2510_25741_Scaling_Latent_Reasoning/
+├── 2412_04445/
 └── arxivcat_global_chats/    # Global chat sessions
 ```
 
@@ -296,6 +294,7 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper remove` | `{removed, folder}` |
 | `paper redownload` | `{redownloaded, folder}` |
 | `token status` | Token configured, masked, valid, response time |
+| `workspace scan` | `{scanned: N}` |
 
 ---
 
@@ -324,7 +323,7 @@ On failure it is:
 {"error": {"code": 3, "kind": "http", "message": "...", "retryable": true}}
 ```
 
-`kind` ∈ io | http | parse | extraction | chat | config | not_found | json | other | usage.
+`kind` ∈ io | http | parse | extraction | chat | config | not_found | json | other | usage | ambiguous (exit 5).
 `retryable` is true for http and for chat except 401/403.
 
 **Stream discipline**: payload goes to stdout; progress/diagnostics go to

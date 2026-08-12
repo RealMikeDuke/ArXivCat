@@ -353,8 +353,12 @@ We conclude.";
     fn extract_body_from_dir_non_utf8_lossy() {
         use arxivcat_core::extract::tex::extract_body_from_dir;
         let dir = tempfile::tempdir().unwrap();
-        // latin-1 content (0xE9 = é in latin-1, invalid UTF-8 alone)
-        let bytes = br"\documentclass{article}\n\begin{document}\nCaf\xe9 test\n\end{document}";
+        // REAL latin-1 bytes: 0xE9 is é in latin-1 and invalid UTF-8. Note a
+        // raw byte-string literal cannot express this — the byte must be
+        // written explicitly (previous fixture was ASCII-only, a false positive).
+        let mut bytes = b"\\documentclass{article}\n\\begin{document}\nCaf".to_vec();
+        bytes.push(0xE9);
+        bytes.extend_from_slice(b" test\n\\end{document}");
         std::fs::write(dir.path().join("main.tex"), bytes).unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();

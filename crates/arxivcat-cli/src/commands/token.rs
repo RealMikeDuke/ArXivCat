@@ -80,19 +80,27 @@ pub async fn cmd_status(cli: &Cli) {
     }
 }
 
-pub async fn cmd_set(_cli: &Cli) {
+pub async fn cmd_set(cli: &Cli) {
+    if cli.json {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for token set",
+        );
+    }
     use std::io::{self, Write};
 
     print!("Enter DeepSeek API token: ");
     io::stdout().flush().ok();
     let mut token = String::new();
     if io::stdin().read_line(&mut token).is_err() {
-        crate::commands::die(_cli, crate::commands::EXIT_IO, "io", "error reading input");
+        crate::commands::die(cli, crate::commands::EXIT_IO, "io", "error reading input");
     }
     let token = token.trim().to_string();
     if token.is_empty() {
         crate::commands::die(
-            _cli,
+            cli,
             crate::commands::EXIT_USAGE,
             "usage",
             "token cannot be empty",
@@ -102,12 +110,20 @@ pub async fn cmd_set(_cli: &Cli) {
     match config::save_token(&token) {
         Ok(()) => println!("token saved"),
         Err(e) => {
-            crate::commands::die(_cli, crate::commands::EXIT_IO, "io", &e.to_string());
+            crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
         }
     }
 }
 
 pub async fn cmd_validate(cli: &Cli) {
+    if cli.json {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_USAGE,
+            "usage",
+            "--json is not supported for token validate",
+        );
+    }
     let token = config::load_cached_token();
     let token = match token {
         Some(t) => t,
