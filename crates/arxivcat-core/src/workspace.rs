@@ -47,8 +47,10 @@ impl Paper {
 
         // Legacy read-only fallback: parse {id1}_{id2}_..._{title} (or ID-only
         // {id1}_{id2} with empty title). P1.2 makes the ID-only form canonical.
+        // First segment MUST be digits — otherwise a user dir like `my_notes`
+        // would become a ghost paper `my.notes` and get downloaded into (C).
         let parts: Vec<&str> = folder_name.split('_').collect();
-        if parts.len() < 2 {
+        if parts.len() < 2 || !parts[0].chars().all(|c| c.is_ascii_digit()) {
             return None;
         }
 

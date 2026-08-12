@@ -29,6 +29,9 @@ impl HttpConfig {
                 "arxivcat/{} (+https://github.com/RealMikeDuke/ArXivCat)",
                 env!("CARGO_PKG_VERSION")
             ))
+            // Total request timeout: a stalled connection must not hang a
+            // headless run forever. Per-request overrides can shorten it.
+            .timeout(Duration::from_secs(120))
             .build()
             .map_err(ArxivError::Http)?;
 

@@ -137,8 +137,14 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     }
 
     // Single-download must also write the manifest (P1.1 write-path rule).
-    // Title comes from a future export-API fetch; keep any existing value.
-    let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, "");
+    // Backfill the title best-effort so `paper list` shows a real title
+    // right after a fresh download (previously always empty).
+    let title = arxivcat_core::extract::arxiv::fetch_title_from_arxiv(&http, &arxiv_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);
 
     if !cli.json {
         println!("{}", ok("extraction complete"));
@@ -408,9 +414,10 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
     let note_path = paper.folder.join("note.txt");
 
     if edit {
+        let default_editor = if cfg!(windows) { "notepad" } else { "vi" };
         let editor = std::env::var("EDITOR")
             .or_else(|_| std::env::var("VISUAL"))
-            .unwrap_or_else(|_| "notepad".to_string());
+            .unwrap_or_else(|_| default_editor.to_string());
         let status = std::process::Command::new(&editor).arg(&note_path).status();
         match status {
             Ok(s) if s.success() => {}
@@ -439,7 +446,7 @@ pub async fn cmd_note(cli: &Cli, id_or_query: &str, text: &str, edit: bool) {
                 }
             }
             Err(e) => {
-                crate::commands::die(cli, crate::commands::EXIT_DATA, "not_found", &e.to_string());
+                crate::commands::die(cli, crate::commands::EXIT_IO, "io", &e.to_string());
             }
         }
     } else {
@@ -638,15 +645,22 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     let folder = paper.folder.clone();
-    // Preserve user metadata across the re-download (P1.5).
+    // Preserve user metadata across the re-download (P1.5). Timestamped so
+    // a stale /tmp dir from a crashed run can never collide and silently
+    // lose the backup (rename-to-existing fails).
     let backup = std::env::temp_dir().join(format!(
-        "arxivcat_redl_{}_{}",
+        "arxivcat_redl_{}_{}_{}",
         std::process::id(),
-        paper.folder_name
+        paper.folder_name,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
     ));
     let _ = std::fs::create_dir_all(&backup);
     // .description_ready must be preserved too, else redownload silently
     // loses the description_ready state (P1.5 regression).
+    let mut backup_failed = false;
     for name in [
         "note.txt",
         "description.md",
@@ -654,9 +668,12 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
         ".description_ready",
     ] {
         let src = folder.join(name);
-        if src.exists() {
-            let _ = std::fs::rename(&src, backup.join(name));
+        if src.exists() && std::fs::rename(&src, backup.join(name)).is_err() {
+            backup_failed = true;
         }
+    }
+    if backup_failed {
+        eprintln!("warning: failed to back up some metadata before re-download");
     }
 
     match std::fs::remove_dir_all(&folder) {

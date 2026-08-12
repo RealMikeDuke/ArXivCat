@@ -347,6 +347,26 @@ We conclude.";
         assert!(!ctx.contains("appendix"));
     }
 
+    // ─── Ghost-paper regression (zero-preset review C) ───
+
+    #[test]
+    fn non_paper_dirs_are_not_papers() {
+        // A user directory like `my_notes` must never become paper `my.notes`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("my_notes")).unwrap();
+        std::fs::write(dir.path().join("my_notes").join("todo.txt"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("2501_12948")).unwrap();
+        std::fs::write(dir.path().join("2501_12948").join("body.tex"), "x").unwrap();
+
+        let ws = Workspace::open(dir.path()).unwrap();
+        let ids: Vec<&str> = ws.papers.iter().map(|p| p.arxiv_id.as_str()).collect();
+        assert!(
+            !ids.contains(&"my.notes"),
+            "non-digit folder must not parse as a paper, got {ids:?}"
+        );
+        assert!(ids.contains(&"2501.12948"));
+    }
+
     // ─── P0.8: lossy reads + unexpanded-reference warnings ───
 
     #[test]

@@ -5,8 +5,17 @@ pub async fn cmd_status(cli: &Cli) {
     let token = config::load_cached_token();
     match token {
         Some(t) => {
-            let masked = if t.len() > 8 {
-                format!("{}...{}", &t[..4], &t[t.len() - 4..])
+            let masked = if t.chars().count() > 8 {
+                let head: String = t.chars().take(4).collect();
+                let tail: String = t
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                format!("{head}...{tail}")
             } else {
                 "***".to_string()
             };

@@ -25,17 +25,30 @@ pub struct ContextSelection {
     pub note: bool,
 }
 
+/// Cap per-file context at ~120k chars (~30k tokens) so huge papers cannot
+/// blow the model token limit or the request size.
+const MAX_CONTEXT_CHARS: usize = 120_000;
+
+fn truncate_context(content: &str) -> String {
+    if content.chars().count() > MAX_CONTEXT_CHARS {
+        let head: String = content.chars().take(MAX_CONTEXT_CHARS).collect();
+        format!("{head}\n\n...[truncated by arxivcat]")
+    } else {
+        content.to_string()
+    }
+}
+
 pub fn build_side_chat_context(paper_dir: &Path, selection: &ContextSelection) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     if selection.body {
         if let Ok(content) = std::fs::read_to_string(paper_dir.join("body.tex")) {
-            parts.push(format!("body:\n{}", content));
+            parts.push(format!("body:\n{}", truncate_context(&content)));
         }
     }
     if selection.appendix {
         if let Ok(content) = std::fs::read_to_string(paper_dir.join("appendix.tex")) {
-            parts.push(format!("appendix:\n{}", content));
+            parts.push(format!("appendix:\n{}", truncate_context(&content)));
         }
     }
     if selection.description {
@@ -63,12 +76,12 @@ pub fn build_global_chat_context(papers: &[Paper], selection: &ContextSelection)
 
         if selection.body {
             if let Ok(content) = std::fs::read_to_string(paper.folder.join("body.tex")) {
-                sections.push(format!("body:\n{}", content));
+                sections.push(format!("body:\n{}", truncate_context(&content)));
             }
         }
         if selection.appendix {
             if let Ok(content) = std::fs::read_to_string(paper.folder.join("appendix.tex")) {
-                sections.push(format!("appendix:\n{}", content));
+                sections.push(format!("appendix:\n{}", truncate_context(&content)));
             }
         }
         if selection.description {

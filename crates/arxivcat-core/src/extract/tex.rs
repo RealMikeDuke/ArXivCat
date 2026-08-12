@@ -93,6 +93,8 @@ pub fn strip_latex_comments(tex_content: &str) -> String {
     result
 }
 
+const MAX_INPUT_DEPTH: usize = 64;
+
 pub fn expand_inputs(
     tex_content: &str,
     base_dir: &Path,
@@ -100,6 +102,14 @@ pub fn expand_inputs(
     root_dir: Option<&Path>,
 ) -> Result<String> {
     let root_dir = root_dir.unwrap_or(base_dir);
+    // Depth limit: malicious/broken papers with deeply nested \input chains
+    // must not blow the stack.
+    let depth = seen.as_ref().map(|s| s.len()).unwrap_or(0);
+    if depth > MAX_INPUT_DEPTH {
+        return Err(ArxivError::Extraction(format!(
+            "input expansion exceeds max depth {MAX_INPUT_DEPTH}"
+        )));
+    }
     let stripped = strip_latex_comments(tex_content);
 
     let input_re = Regex::new(r"\\(?:input|include)\s*\{([^}]+)\}")

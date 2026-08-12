@@ -116,6 +116,12 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
     let description_ready =
         files.description.is_some() && paper_dir.join(".description_ready").is_file();
 
+    // downloaded_at: set once on first scan (or preserve previous value).
+    let downloaded_at = match prev.as_ref() {
+        Some(m) if !m.downloaded_at.is_empty() => m.downloaded_at.clone(),
+        _ => chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+    };
+
     Ok(PaperManifest {
         schema: 1,
         arxiv_id: arxiv_id.to_string(),
@@ -125,10 +131,7 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         } else {
             title.to_string()
         },
-        downloaded_at: prev
-            .as_ref()
-            .map(|m| m.downloaded_at.clone())
-            .unwrap_or_default(),
+        downloaded_at,
         files,
         description_ready,
         last_error: prev.as_ref().and_then(|m| m.last_error.clone()),

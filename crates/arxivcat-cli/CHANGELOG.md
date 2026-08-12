@@ -1,5 +1,14 @@
 # Changelog — arxivcat-cli
 
+## [0.11.3] — 2026-08-12
+
+- Zero-preset review round: ghost-paper fix (non-digit folders are never
+  parsed as papers), HTTP total timeout (120s), \input expansion depth
+  limit (64), chat context truncation (120k chars/file), downloaded_at
+  now populated, single-download title backfill, redownload backup
+  timestamped + surfaced, token mask char-safe, note-io kind fix,
+  editor fallback (vi on unix / notepad on windows).
+
 ## [0.11.2] — 2026-08-12
 
 - Expert-review round: 429/5xx retry-exhaustion now surfaces as exit 3 /
