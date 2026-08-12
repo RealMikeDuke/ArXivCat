@@ -148,7 +148,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
 
     if !cli.json {
         println!("{}", ok("extraction complete"));
-        println!("arxiv ID: {}", &arxiv_id);
+        println!("arxiv ID: {arxiv_id}");
         println!("folder: {}", output_dir.display());
         println!("body: {} chars", output.body.len());
         if let Some(ref app) = output.appendix {
