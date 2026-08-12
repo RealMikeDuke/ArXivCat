@@ -134,6 +134,10 @@ Print the content of a paper file. Accepts raw ID, partial ID, or full URL.
 
 #### `note <ID_OR_QUERY> [TEXT]`
 
+> Note: `note` accepts free-form trailing text, so a global `--json` must be
+> placed BEFORE the subcommand (`arxivcat --json paper note ...`) — after it
+> the flag is consumed as note text. `note` has no JSON contract regardless.
+
 Three modes:
 - **No args, no flags**: Print current `note.txt` content (or `(no note)` if empty).
 - **With TEXT**: Overwrite `note.txt` with the given text.

@@ -1,5 +1,15 @@
 # Changelog — arxivcat-cli
 
+## [0.11.2] — 2026-08-12
+
+- Expert-review round: 429/5xx retry-exhaustion now surfaces as exit 3 /
+  kind http / retryable true (was exit 1/other); 404 source -> exit 5.
+- `mark_failure` no longer writes empty-ID manifests for legacy folders.
+- `--json` rejected (exit 2) on non-JSON commands; `--jobs` validated 1..=8.
+- redownload preserves `.description_ready`; manifest pdf key fixed;
+  dead title request removed; tokio narrowed to `time`.
+- New contract tests (wiremock end-to-end): exit 2/3/5/8 locked.
+
 ## [0.11.1] — 2026-08-12
 
 - Publish metadata: `license = "MIT"`, `repository`; core dep pinned
