@@ -21,9 +21,9 @@ pub struct ChatMetrics {
 
 pub struct StreamCallbacks<F1, F2, F3>
 where
-    F1: Fn(&str, bool),
-    F2: Fn(&str),
-    F3: Fn(&str),
+    F1: FnMut(&str, bool),
+    F2: FnMut(&str),
+    F3: FnMut(&str),
 {
     pub on_token: F1,
     pub on_status: F2,
@@ -35,13 +35,13 @@ pub async fn stream_chat<F1, F2, F3>(
     messages: &[serde_json::Value],
     model: &str,
     reasoning_effort: &str,
-    callbacks: StreamCallbacks<F1, F2, F3>,
+    mut callbacks: StreamCallbacks<F1, F2, F3>,
     cancel_flag: &std::sync::atomic::AtomicBool,
 ) -> Result<()>
 where
-    F1: Fn(&str, bool),
-    F2: Fn(&str),
-    F3: Fn(&str),
+    F1: FnMut(&str, bool),
+    F2: FnMut(&str),
+    F3: FnMut(&str),
 {
     let api_key = config::load_cached_token()
         .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;

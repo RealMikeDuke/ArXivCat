@@ -263,7 +263,15 @@ async fn run_repl(cli: &Cli, cfg: ReplConfig<'_>) {
                 on_status: |status| {
                     println!("\n[{}]", gray(status));
                 },
-                on_complete: |_content| {},
+                on_complete: |content| {
+                    // Keep the assistant reply in history, otherwise the
+                    // model only ever sees user turns and multi-turn
+                    // continuity ("expand on point 1") cannot work.
+                    history.push(chat::session::ChatMessage {
+                        speaker: "assistant".to_string(),
+                        content: content.to_string(),
+                    });
+                },
             },
             &cancel_flag,
         )

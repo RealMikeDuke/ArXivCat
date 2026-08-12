@@ -203,7 +203,11 @@ pub async fn download_pdf(
     arxiv_id: &str,
     output_dir: &Path,
 ) -> Result<Option<PathBuf>> {
-    let pdf_path = output_dir.join(format!("{arxiv_id}.pdf"));
+    // Write with the base id (version stripped) so the manifest's
+    // {base_id}.pdf scan and the on-disk file always agree — a versioned
+    // input like 2501.12948v2 must record the same pdf as 2501.12948.
+    let base_id = crate::manifest::strip_version(arxiv_id);
+    let pdf_path = output_dir.join(format!("{base_id}.pdf"));
     if pdf_path.exists() {
         return Ok(Some(pdf_path));
     }

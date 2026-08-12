@@ -369,14 +369,11 @@ pub async fn cmd_preview(cli: &Cli, id_or_query: &str, view: &str) {
                 );
             }
             Err(_) => {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "arxiv_id": paper.arxiv_id,
-                        "title": paper.title,
-                        "view": view,
-                        "error": "file not found"
-                    })
+                crate::commands::die(
+                    cli,
+                    crate::commands::EXIT_DATA,
+                    "not_found",
+                    &format!("file not found: {view} ({})", path.display()),
                 );
             }
         }
@@ -673,7 +670,12 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
         }
     }
     if backup_failed {
-        eprintln!("warning: failed to back up some metadata before re-download");
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_IO,
+            "io",
+            "metadata backup failed — aborting re-download to protect data",
+        );
     }
 
     match std::fs::remove_dir_all(&folder) {

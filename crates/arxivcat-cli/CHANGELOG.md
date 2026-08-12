@@ -1,5 +1,16 @@
 # Changelog — arxivcat-cli
 
+## [0.11.5] — 2026-08-12
+
+- PDF filename normalized to base-id ({base_id}.pdf) for versioned inputs —
+  manifest `files.pdf` and disk now always agree.
+- `paper preview --json` missing file -> exit 5 / kind not_found (was
+  exit 0 + embedded error; contract violation).
+- Chat REPL: assistant replies are appended to history (multi-turn
+  continuity actually works now); callbacks are FnMut.
+- `redownload` aborts (exit 6) instead of deleting the folder when the
+  metadata backup fails (cross-device rename protection).
+
 ## [0.11.4] — 2026-08-12
 
 - Refactor: chat REPL deduplicated (~400 duplicated lines → shared

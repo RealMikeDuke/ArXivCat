@@ -112,6 +112,32 @@ async fn respects_retry_after_header() {
 }
 
 #[tokio::test]
+async fn versioned_download_writes_base_id_pdf() {
+    // 2501.12948v2 must land as 2501.12948.pdf so the manifest scan
+    // ({base_id}.pdf) and the on-disk file agree (expert review C).
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/pdf/2501.12948v2"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"%PDF-1.4 fake"))
+        .mount(&server)
+        .await;
+
+    let cfg = test_cfg(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = arxivcat_core::extract::source::download_pdf(&cfg, "2501.12948v2", dir.path())
+        .await
+        .unwrap();
+    let path = out.expect("pdf downloaded");
+    assert_eq!(
+        path.file_name().unwrap().to_str().unwrap(),
+        "2501.12948.pdf",
+        "versioned input must write the base-id filename"
+    );
+    assert!(dir.path().join("2501.12948.pdf").exists());
+    assert!(!dir.path().join("2501.12948v2.pdf").exists());
+}
+
+#[tokio::test]
 async fn title_failure_never_blocks_download_folder() {
     // A 500 on the abs page must not prevent download_source from returning
     // an ID-only folder decision (P0.7/P1.3 contract).
