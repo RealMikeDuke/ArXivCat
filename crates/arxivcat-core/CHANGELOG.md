@@ -1,5 +1,11 @@
 # Changelog — arxivcat-core
 
+## [0.11.4] — 2026-08-12
+
+- Refactor: chat REPL deduplicated (~400 duplicated lines → shared
+  `run_repl` parameterized by context builder/session metadata/lock rule);
+  side and global loops no longer drift apart.
+
 ## [0.11.3] — 2026-08-12
 
 - Zero-preset review round: ghost-paper fix (non-digit folders are never
