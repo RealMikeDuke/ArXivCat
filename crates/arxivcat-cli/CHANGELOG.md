@@ -1,5 +1,17 @@
 # Changelog — arxivcat-cli
 
+## [0.11.6] — 2026-08-12
+
+- tex.rs slice panic closed (malformed papers can no longer exit 101
+  outside the frozen exit-code contract).
+- Duplicate legacy + canonical folders no longer deadlock every command —
+  exact base-id query prefers the canonical folder.
+- `redownload` hits the network again (cache bypass) and refreshes the
+  manifest after metadata restore (description_ready stays fresh).
+- `describe` context truncated (120k chars/file, same policy as chat).
+- Dead code removed (generate_title, ChatMetrics); `/thinking off` now
+  explicitly disables thinking in the API request.
+
 ## [0.11.5] — 2026-08-12
 
 - PDF filename normalized to base-id ({base_id}.pdf) for versioned inputs —

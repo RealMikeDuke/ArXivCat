@@ -42,7 +42,10 @@ fn invalid_arxiv_id_exits_2() {
 #[test]
 fn paper_not_found_exits_5() {
     let ws = tmp_ws("nf");
-    std::fs::write(ws.join("2501_12948").join("body.tex"), "x").unwrap_or(());
+    // Create the folder first — writing into a non-existent parent would
+    // silently fail and the test would pass for the wrong reason.
+    std::fs::create_dir_all(ws.join("2501_12948")).unwrap();
+    std::fs::write(ws.join("2501_12948").join("body.tex"), "x").unwrap();
     let out = bin()
         .args([
             "-w",

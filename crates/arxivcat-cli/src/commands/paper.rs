@@ -691,6 +691,13 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     }
 
     let downloads_dir = config::get_downloads_dir();
+    // "redownload" must actually hit the network — the plain download path
+    // is cache-first and would otherwise just re-extract the local copy,
+    // never picking up a newer arXiv version (T0 P2).
+    let cache_dir = downloads_dir.join(&paper.folder_name);
+    if cache_dir.exists() {
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
         Err(e) => crate::commands::die_err(cli, &e),
@@ -728,6 +735,9 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
             let _ = std::fs::rename(&src, dst);
         }
     }
+    // Refresh AFTER the meta restore so description_ready reflects the
+    // restored flag file (previously it stayed stale until the next scan).
+    let _ = arxivcat_core::manifest::refresh_manifest(&folder, &paper.arxiv_id, &paper.title);
     let _ = std::fs::remove_dir_all(&backup);
 
     match result {

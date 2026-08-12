@@ -27,15 +27,27 @@ pub async fn build_description(
         let mut ctx = String::new();
         if body_path.exists() {
             let body = std::fs::read_to_string(&body_path)?;
-            ctx.push_str(&body);
+            ctx.push_str(&truncate_desc(&body));
         }
         if appendix_path.exists() {
             let appendix = std::fs::read_to_string(&appendix_path)?;
             ctx.push_str("\n\n[Appendix]\n");
-            ctx.push_str(&appendix);
+            ctx.push_str(&truncate_desc(&appendix));
         }
         ctx
     };
+
+    /// Cap per-file context at ~120k chars (~30k tokens), same policy as chat.
+    const MAX_DESC_CHARS: usize = 120_000;
+
+    fn truncate_desc(s: &str) -> String {
+        if s.chars().count() > MAX_DESC_CHARS {
+            let head: String = s.chars().take(MAX_DESC_CHARS).collect();
+            format!("{head}\n\n...[truncated by arxivcat]")
+        } else {
+            s.to_string()
+        }
+    }
 
     if context.trim().is_empty() {
         return Err(ArxivError::Extraction("paper text is empty".into()));

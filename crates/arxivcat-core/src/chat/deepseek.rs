@@ -12,12 +12,6 @@ pub fn model_id(name: &str) -> Option<&'static str> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ChatMetrics {
-    pub ttft_ms: f64,
-    pub tokens_per_sec: f64,
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-}
 
 pub struct StreamCallbacks<F1, F2, F3>
 where
@@ -57,6 +51,10 @@ where
     if reasoning_effort != "off" {
         body["thinking"] = serde_json::json!({"type": "enabled"});
         body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
+    } else {
+        // Explicitly disable thinking — the API defaults to enabled, so an
+        // omitted field would not actually turn it off.
+        body["thinking"] = serde_json::json!({"type": "disabled"});
     }
 
     let response = cfg
@@ -154,60 +152,4 @@ where
     }
 
     Ok(())
-}
-
-pub async fn generate_title(
-    cfg: &crate::net::HttpConfig,
-    messages: &[serde_json::Value],
-) -> Result<String> {
-    let api_key = config::load_cached_token()
-        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
-
-    let mut body = serde_json::json!({
-        "model": "deepseek-v4-flash",
-        "messages": messages,
-        "max_tokens": 20,
-        "stream": false,
-        "thinking": {"type": "disabled"},
-    });
-
-    body["messages"].as_array_mut().unwrap().push(serde_json::json!({
-        "role": "user",
-        "content": "Generate a short title for this conversation in the same language as the conversation. Output only the title."
-    }));
-
-    let response = cfg
-        .client
-        .post(cfg.deepseek_chat_url())
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| ArxivError::Chat(format!("title API request failed: {e}")))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(ArxivError::Chat(format!(
-            "title API error {status}: {text}"
-        )));
-    }
-
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| ArxivError::Chat(format!("failed to parse title response: {e}")))?;
-
-    let title = json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    if title.is_empty() {
-        return Err(ArxivError::Chat("empty title response".into()));
-    }
-
-    Ok(title)
 }

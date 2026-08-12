@@ -248,7 +248,11 @@ pub fn extract_body_and_appendix(tex_content: &str) -> Result<(String, Option<St
         }
     };
 
-    let body = tex_content[start..body_end].trim().to_string();
+    let body = tex_content
+        .get(start..body_end)
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
     let appendix_content = if body_end < tex_content.len() {
         let end = doc_end.unwrap_or(tex_content.len());

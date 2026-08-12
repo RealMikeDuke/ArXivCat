@@ -102,6 +102,14 @@ pub fn resolve_workspace(cli: &Cli) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Best-effort base-id extraction for disambiguation (accepts bare IDs and
+/// arxiv.org URLs).
+fn base_id_of(query: &str) -> String {
+    arxivcat_core::extract::arxiv::extract_arxiv_id(query)
+        .map(|id| arxivcat_core::manifest::strip_version(&id))
+        .unwrap_or_default()
+}
+
 pub fn find_papers(workspace: &Workspace, query: &str) -> Vec<arxivcat_core::workspace::Paper> {
     let mut found: Vec<arxivcat_core::workspace::Paper> = Vec::new();
     for p in workspace.find_papers_by_id(query) {
@@ -136,6 +144,18 @@ pub fn find_paper_or_die(
         ),
         1 => matches.into_iter().next().unwrap(),
         n => {
+            // Exact base-ID query with legacy duplicates: the canonical
+            // folder (named exactly {base_id}) wins, so a user who has both
+            // `2501_12948_Legacy_Dup` and `2501_12948` can still address the
+            // paper — otherwise every command deadlocks on ambiguity.
+            let exact: Vec<arxivcat_core::workspace::Paper> = matches
+                .iter()
+                .filter(|p| p.folder_name == base_id_of(query))
+                .cloned()
+                .collect();
+            if exact.len() == 1 {
+                return exact.into_iter().next().unwrap();
+            }
             let ids: Vec<String> = matches.iter().map(|p| p.arxiv_id.clone()).collect();
             die(
                 cli,
