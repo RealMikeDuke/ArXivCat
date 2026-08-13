@@ -179,7 +179,9 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
         Err(e) => crate::commands::die_err(cli, &e),
     };
 
-    // jobs already validated 1..=8 by clap (main.rs) — clamp was dead code (P3-3).
+    // Defensive clamp — clap already validates 1..=8, but keep this as a
+    // library-facing guard (P3-3 known-issue; restored after jury-review).
+    let jobs = jobs.clamp(1, 8);
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

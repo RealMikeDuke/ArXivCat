@@ -67,6 +67,9 @@ Actual publishing needs a crates.io token and is a user decision.
 - P3-2 (GHOST, verified non-issue): `{:<20}` pads the arxiv_id column, NOT
   the title — titles were never truncated. No action needed; recorded so it
   is not re-reported.
+- P3-3: `--jobs` is validated 1..=8 by clap AND clamped again in
+  `cmd_download_all` — redundant defense, kept intentionally (restored
+  after jury-review flagged the removal as contradicting the adjudication).
 - P3-4: `token set` echoes the key in plain text (storage is 0600 + masked
   everywhere else). Deferred; `DEEPSEEK_API_KEY` env var is the recommended
   path for sensitive environments.

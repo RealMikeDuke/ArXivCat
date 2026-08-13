@@ -1,5 +1,16 @@
 # Changelog — arxivcat-core
 
+## [0.11.8] — 2026-08-14
+
+- Jury-review fixes on v0.11.7:
+  - P2-1 corrected: export-API title keys normalized to base id (versioned
+    `<id>2501.12948v2</id>` now resolves under bare `2501.12948` — the
+    v0.11.7 title backfill was a silent regression for the most common
+    input). Regression test added.
+  - P3-3 clamp restored (removal contradicted the adjudication record);
+    recorded as known-issue.
+  - Cargo.lock synced (was dirtied by build).
+
 ## [0.11.7] — 2026-08-14
 
 - Jury-decide round (P2/P3 adjudication): title backfill now uses the

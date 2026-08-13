@@ -108,7 +108,10 @@ pub async fn fetch_titles_batch(
             Err(_) => continue,
         };
         for (id, title) in parse_atom_entries(&text) {
-            out.insert(id, title);
+            // The export API always returns VERSIONED ids (2501.12948v2)
+            // even for a bare query. Normalize to base id so both versioned
+            // and bare lookups hit (jury-review MAJOR #1).
+            out.insert(crate::manifest::strip_version(&id), title);
         }
         // Respect the 3s rate limit between export API calls — but not
         // after the last chunk (P3-1).

@@ -138,6 +138,35 @@ async fn versioned_download_writes_base_id_pdf() {
 }
 
 #[tokio::test]
+async fn batch_titles_normalize_versioned_ids() {
+    // The export API always returns VERSIONED <id>s; keys must be base ids
+    // so bare "2501.12948" lookups hit (jury-review MAJOR #1 regression).
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2501.12948v2</id>
+    <title>DeepSeek-R1 Incentivizing Reasoning Capabilities in LLMs</title>
+  </entry>
+</feed>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cfg = test_cfg(&server).await;
+    let map =
+        arxivcat_core::extract::arxiv::fetch_titles_batch(&cfg, &["2501.12948".to_string()]).await;
+    assert_eq!(
+        map.get("2501.12948").map(|s| s.as_str()),
+        Some("DeepSeek-R1 Incentivizing Reasoning Capabilities in LLMs"),
+        "versioned export id must resolve under the bare base id"
+    );
+}
+
+#[tokio::test]
 async fn title_failure_never_blocks_download_folder() {
     // A 500 on the abs page must not prevent download_source from returning
     // an ID-only folder decision (P0.7/P1.3 contract).
