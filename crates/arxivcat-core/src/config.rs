@@ -86,15 +86,41 @@ pub fn load_workspace_path() -> Option<String> {
 }
 
 pub fn save_workspace_path(path: &Path) -> Result<()> {
-    let mut config = Config::load().unwrap_or_default();
+    let mut config = load_or_backup_corrupt();
     config.workspace_path = Some(path.to_string_lossy().to_string());
     config.save()
 }
 
 pub fn save_token(token: &str) -> Result<()> {
-    let mut config = Config::load().unwrap_or_default();
+    let mut config = load_or_backup_corrupt();
     config.deepseek_api_key = Some(token.to_string());
     config.save()
+}
+
+/// Load the config; if the file exists but fails to parse, back it up as
+/// `config.json.corrupt-<ts>` and warn — a later save must never silently
+/// overwrite a corrupted file the user could otherwise repair (P2-5).
+fn load_or_backup_corrupt() -> Config {
+    match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            let path = crate::config::get_config_path();
+            if path.exists() {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let backup = path.with_extension(format!("json.corrupt-{ts}"));
+                if std::fs::rename(&path, &backup).is_ok() {
+                    eprintln!(
+                        "warning: config.json was corrupted ({e}); backed up to {}",
+                        backup.display()
+                    );
+                }
+            }
+            Config::default()
+        }
+    }
 }
 
 pub fn load_cached_token() -> Option<String> {
@@ -103,7 +129,7 @@ pub fn load_cached_token() -> Option<String> {
 }
 
 pub fn save_model_preference(model: &str) -> Result<()> {
-    let mut config = Config::load().unwrap_or_default();
+    let mut config = load_or_backup_corrupt();
     config.chat_model = Some(model.to_string());
     config.save()
 }
@@ -118,6 +144,10 @@ pub fn load_model_preference() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Config tests mutate the process-wide APPDATA env var — serialize them
+    // or they clobber each other when run in parallel.
+    static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_config_deserialize_corrupted() {
@@ -151,6 +181,7 @@ mod tests {
 
     #[test]
     fn test_config_save_atomic_and_0600() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap();
         // Isolate via APPDATA so the real user config is never touched.
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("APPDATA", dir.path()) };
@@ -180,5 +211,29 @@ mod tests {
         let loaded = Config::load().unwrap();
         assert_eq!(loaded.deepseek_api_key.as_deref(), Some("sk-test"));
         assert_eq!(loaded.workspace_path.as_deref(), Some("/tmp/ws"));
+    }
+    #[test]
+    fn corrupted_config_is_backed_up_not_overwritten() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("APPDATA", dir.path()) };
+        let cfg_path = get_config_path();
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, "{ corrupted json !!!").unwrap();
+
+        // Saving must back up the corrupt file instead of silently clobbering it.
+        save_token("sk-test").unwrap();
+        assert!(
+            std::fs::read_dir(cfg_path.parent().unwrap())
+                .unwrap()
+                .any(|e| e
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("config.json.corrupt-")),
+            "corrupt config must be preserved as a .corrupt-* backup"
+        );
+        // And the config still works afterwards.
+        assert_eq!(load_cached_token().as_deref(), Some("sk-test"));
     }
 }

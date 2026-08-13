@@ -138,12 +138,15 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
 
     // Single-download must also write the manifest (P1.1 write-path rule).
     // Backfill the title best-effort so `paper list` shows a real title
-    // right after a fresh download (previously always empty).
-    let title = arxivcat_core::extract::arxiv::fetch_title_from_arxiv(&http, &arxiv_id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    // right after a fresh download (previously always empty). Use the
+    // export API (P2-1) instead of an extra abs-page request — one batch
+    // call, no 429 exposure.
+    let title =
+        arxivcat_core::extract::arxiv::fetch_titles_batch(&http, std::slice::from_ref(&arxiv_id))
+            .await
+            .get(&arxiv_id)
+            .cloned()
+            .unwrap_or_default();
     let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);
 
     if !cli.json {
@@ -176,7 +179,7 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
         Err(e) => crate::commands::die_err(cli, &e),
     };
 
-    let jobs = jobs.clamp(1, 8);
+    // jobs already validated 1..=8 by clap (main.rs) — clamp was dead code (P3-3).
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

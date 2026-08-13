@@ -1,5 +1,15 @@
 # Changelog — arxivcat-core
 
+## [0.11.7] — 2026-08-14
+
+- Jury-decide round (P2/P3 adjudication): title backfill now uses the
+  export API (no extra abs-page request / 429 exposure); batch title
+  sleep is conditional (no 3s tail wait); corrupted config.json is backed
+  up as .corrupt-<ts> before overwrite (no silent data loss); API docs
+  pinned for `find_paper_by_id`; dead clamp removed.
+- Accepted known-issues (P2-3 lock-contention cooldown, P2-4 non-Linux
+  best-effort, P3-4 token echo) recorded in docs/maintenance-decisions.md.
+
 ## [0.11.6] — 2026-08-12
 
 - tex.rs slice panic closed (malformed papers can no longer exit 101

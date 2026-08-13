@@ -56,3 +56,17 @@ and must not be reintroduced — `kind` + exit code supersede it.
 - Both manifests now carry `license = "MIT"` and `repository`.
 
 Actual publishing needs a crates.io token and is a user decision.
+
+## Known issues (jury-decide 2026-08-14 — deferred / accepted)
+
+- P2-3: cross-process lock contention on the SAME paper marks it failed and
+  arms the 24h cooldown; `--force` bypasses. Accepted for 0.11.x; revisit
+  the failure-accounting semantics in a future release.
+- P2-4: Windows/macOS are best-effort, not CI-covered (README updated to say
+  so). Full CI matrix deferred.
+- P3-2 (GHOST, verified non-issue): `{:<20}` pads the arxiv_id column, NOT
+  the title — titles were never truncated. No action needed; recorded so it
+  is not re-reported.
+- P3-4: `token set` echoes the key in plain text (storage is 0600 + masked
+  everywhere else). Deferred; `DEEPSEEK_API_KEY` env var is the recommended
+  path for sensitive environments.

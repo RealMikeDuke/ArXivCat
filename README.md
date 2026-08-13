@@ -14,7 +14,8 @@ cargo build --release --bin arxivcat
 # binary: target/release/arxivcat
 ```
 
-Requires: Rust toolchain (stable), Linux/macOS/Windows.
+Requires: Rust toolchain (stable). Linux is the primary tested platform
+(CI); macOS/Windows are best-effort, not CI-covered.
 
 ## Quick Start
 

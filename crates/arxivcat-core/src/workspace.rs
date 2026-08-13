@@ -163,6 +163,13 @@ impl Workspace {
             .collect()
     }
 
+    /// Returns the FIRST paper matching `arxiv_id`.
+    ///
+    /// ⚠️ When the workspace contains both a legacy `{id}_{title}` folder and
+    /// the canonical `{id}` folder, this silently picks one — prefer
+    /// `find_papers_by_id` plus explicit disambiguation in new callers. Kept
+    /// as-is for API stability (0.11.x); revisit with a `Result` in a future
+    /// breaking release.
     pub fn find_paper_by_id(&self, arxiv_id: &str) -> Option<&Paper> {
         self.find_papers_by_id(arxiv_id).into_iter().next()
     }

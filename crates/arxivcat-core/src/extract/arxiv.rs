@@ -94,7 +94,9 @@ pub async fn fetch_titles_batch(
         return out;
     }
     // arXiv export API: 1 request per 3s rate limit; chunk conservatively.
-    for chunk in ids.chunks(50) {
+    let chunks: Vec<&[String]> = ids.chunks(50).collect();
+    let last = chunks.len().saturating_sub(1);
+    for (i, chunk) in chunks.iter().enumerate() {
         let id_list = chunk.join(",");
         let url = format!("{}/api/query?id_list={}", cfg.arxiv_base, id_list);
         let response = match cfg.get_with_retry(&url).await {
@@ -108,8 +110,11 @@ pub async fn fetch_titles_batch(
         for (id, title) in parse_atom_entries(&text) {
             out.insert(id, title);
         }
-        // Respect the 3s rate limit between export API calls.
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        // Respect the 3s rate limit between export API calls — but not
+        // after the last chunk (P3-1).
+        if i < last {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
     }
     out
 }
