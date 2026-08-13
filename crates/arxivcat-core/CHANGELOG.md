@@ -1,11 +1,17 @@
 # Changelog — arxivcat-core
 
+## [0.11.10] — 2026-08-14
+
+- Test-fidelity fix: the versioned-title wiremock test now feeds
+  `2501.12948v2` into `fetch_titles_batch` (guards the actual CLI lookup
+  path instead of reimplementing it). Changelog corrected to name the
+  owning crate.
+
 ## [0.11.9] — 2026-08-14
 
-- Jury-burst round 2 fix: `cmd_download` title lookup now strips the version
-  before `.get()` (map keys are base ids) — versioned inputs like
-  `2501.12948v2` no longer silently miss. Versioned-direction assertion
-  added to the wiremock test.
+- Wiremock test now feeds a versioned id (`2501.12948v2`) into
+  `fetch_titles_batch` and asserts the normalized base-key hit, guarding the
+  CLI consumer lookup path. (The CLI-side lookup fix lives in arxivcat-cli.)
 
 ## [0.11.8] — 2026-08-14
 

@@ -1,5 +1,12 @@
 # Changelog — arxivcat-cli
 
+## [0.11.10] — 2026-08-14
+
+- Test-fidelity fix: the versioned-title wiremock test now feeds
+  `2501.12948v2` into `fetch_titles_batch` (guards the actual CLI lookup
+  path instead of reimplementing it). Changelog corrected to name the
+  owning crate.
+
 ## [0.11.9] — 2026-08-14
 
 - Jury-burst round 2 fix: `cmd_download` title lookup now strips the version
