@@ -43,7 +43,12 @@ jobs:
         run: cargo build --release --workspace
 
       - name: CLI smoke (exit-code contract)
+        # GH Actions runs with bash -e: expected non-zero exits (2/4) would
+        # terminate the script immediately. Collect codes with set +e, then
+        # assert all at the end.
         run: |
-          ./target/release/arxivcat --json badcmd >/dev/null 2>&1; test $? -eq 2
-          ./target/release/arxivcat -w /__nope_ws__ paper list --json >/dev/null 2>&1; test $? -eq 4
-          ./target/release/arxivcat --version | grep -q '^arxivcat '
+          set +e
+          ./target/release/arxivcat --json badcmd >/dev/null 2>&1; s1=$?
+          ./target/release/arxivcat -w /__nope_ws__ paper list --json >/dev/null 2>&1; s2=$?
+          ./target/release/arxivcat --version | grep -q '^arxivcat '; s3=$?
+          test "$s1" -eq 2 && test "$s2" -eq 4 && test "$s3" -eq 0
