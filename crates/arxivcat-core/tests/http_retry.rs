@@ -164,6 +164,14 @@ async fn batch_titles_normalize_versioned_ids() {
         Some("DeepSeek-R1 Incentivizing Reasoning Capabilities in LLMs"),
         "versioned export id must resolve under the bare base id"
     );
+    // And a versioned lookup (what cmd_download does for 2501.12948v2 input)
+    // must hit the SAME normalized key after stripping (jury-burst R2).
+    let v = arxivcat_core::manifest::strip_version("2501.12948v2");
+    assert_eq!(
+        map.get(&v).map(|s| s.as_str()),
+        Some("DeepSeek-R1 Incentivizing Reasoning Capabilities in LLMs"),
+        "versioned caller key must hit after strip_version"
+    );
 }
 
 #[tokio::test]

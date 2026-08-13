@@ -144,7 +144,9 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     let title =
         arxivcat_core::extract::arxiv::fetch_titles_batch(&http, std::slice::from_ref(&arxiv_id))
             .await
-            .get(&arxiv_id)
+            // Map keys are normalized to base id — lookup must be too, or a
+            // versioned input (2501.12948v2) silently misses (jury-burst R2).
+            .get(&arxivcat_core::manifest::strip_version(&arxiv_id))
             .cloned()
             .unwrap_or_default();
     let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);

@@ -1,5 +1,12 @@
 # Changelog — arxivcat-cli
 
+## [0.11.9] — 2026-08-14
+
+- Jury-burst round 2 fix: `cmd_download` title lookup now strips the version
+  before `.get()` (map keys are base ids) — versioned inputs like
+  `2501.12948v2` no longer silently miss. Versioned-direction assertion
+  added to the wiremock test.
+
 ## [0.11.8] — 2026-08-14
 
 - Jury-review fixes on v0.11.7:
