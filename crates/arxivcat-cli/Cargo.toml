@@ -1,6 +1,6 @@
 [package]
 name = "arxivcat-cli"
-version = "0.11.10"
+version = "0.11.11"
 edition = "2021"
 description = "CLI for ArxivCat - agent/script friendly"
 license = "MIT"
@@ -11,7 +11,7 @@ name = "arxivcat"
 path = "src/main.rs"
 
 [dependencies]
-arxivcat-core = { path = "../arxivcat-core", version = "0.11.10" }
+arxivcat-core = { path = "../arxivcat-core", version = "0.11.11" }
 clap = { workspace = true }
 owo-colors = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal"] }

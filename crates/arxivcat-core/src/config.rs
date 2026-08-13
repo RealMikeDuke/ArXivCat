@@ -82,7 +82,7 @@ impl Default for Config {
 }
 
 pub fn load_workspace_path() -> Option<String> {
-    Config::load().ok()?.workspace_path
+    load_or_backup_corrupt().workspace_path
 }
 
 pub fn save_workspace_path(path: &Path) -> Result<()> {
@@ -124,8 +124,7 @@ fn load_or_backup_corrupt() -> Config {
 }
 
 pub fn load_cached_token() -> Option<String> {
-    let config = Config::load().ok()?;
-    config.resolve_api_key()
+    load_or_backup_corrupt().resolve_api_key()
 }
 
 pub fn save_model_preference(model: &str) -> Result<()> {
@@ -135,9 +134,8 @@ pub fn save_model_preference(model: &str) -> Result<()> {
 }
 
 pub fn load_model_preference() -> String {
-    Config::load()
-        .ok()
-        .and_then(|c| c.chat_model)
+    load_or_backup_corrupt()
+        .chat_model
         .unwrap_or_else(|| "Flash".to_string())
 }
 
@@ -235,5 +233,29 @@ mod tests {
         );
         // And the config still works afterwards.
         assert_eq!(load_cached_token().as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn corrupt_config_read_path_warns_and_backs_up() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("APPDATA", dir.path()) };
+        let cfg_path = get_config_path();
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, "{ not json").unwrap();
+
+        // Read paths must not silently swallow corruption: they back it up
+        // (and warn), and fall back to defaults instead of pretending OK.
+        assert_eq!(load_workspace_path(), None);
+        assert_eq!(load_model_preference(), "Flash");
+        let backed_up = std::fs::read_dir(cfg_path.parent().unwrap())
+            .unwrap()
+            .any(|e| {
+                e.unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("config.json.corrupt-")
+            });
+        assert!(backed_up, "read path must back up the corrupt config too");
     }
 }

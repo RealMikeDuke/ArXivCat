@@ -14,55 +14,67 @@ impl DownloadLock {
     /// reclaimed.
     const STALE_AFTER_SECS: u64 = 10 * 60;
 
-    fn acquire(downloads_dir: &Path, id_dir_name: &str) -> Result<Self> {
+    /// Max time we wait for a busy lock before giving up (jury-ask A).
+    const WAIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+    /// Poll interval while waiting for the lock holder to finish.
+    const POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+    async fn acquire(downloads_dir: &Path, id_dir_name: &str) -> Result<Self> {
         let lock_dir = downloads_dir.join(".locks");
         std::fs::create_dir_all(&lock_dir)?;
         let path = lock_dir.join(format!("{id_dir_name}.lock"));
 
         // Atomic O_EXCL create — check-then-act would let two processes
         // through simultaneously (TOCTOU). Lock content = unix ms.
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        match options.open(&path) {
-            Ok(mut f) => {
-                use std::io::Write;
-                let _ = f.write_all(now_ms.to_string().as_bytes());
-                Ok(Self { path })
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // Stale recovery: a crashed process left the lock behind.
-                let stale = std::fs::metadata(&path)
-                    .and_then(|m| m.modified())
-                    .map(|t| {
-                        t.elapsed()
-                            .map(|d| d.as_secs() > Self::STALE_AFTER_SECS)
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(false);
-                if stale {
-                    let _ = std::fs::remove_file(&path);
-                    let mut options = std::fs::OpenOptions::new();
-                    options.write(true).create_new(true);
-                    return match options.open(&path) {
-                        Ok(mut f) => {
-                            use std::io::Write;
-                            let _ = f.write_all(now_ms.to_string().as_bytes());
-                            Ok(Self { path })
-                        }
-                        Err(_) => Err(ArxivError::Other(format!(
-                            "another process is already downloading {id_dir_name}"
-                        ))),
-                    };
+        let now_ms = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        };
+
+        // Bounded wait instead of failing on the first collision: another
+        // process downloading the SAME paper finishes in seconds, so an
+        // immediate failure would arm a 24h cooldown for a transient "busy"
+        // (P2-3, jury-ask A). Only after the budget is exhausted do we give
+        // up and let the normal failure path (cooldown + --force) handle it.
+        let deadline = std::time::Instant::now() + Self::WAIT_BUDGET;
+        loop {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            match options.open(&path) {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    let _ = f.write_all(now_ms().to_string().as_bytes());
+                    return Ok(Self { path });
                 }
-                Err(ArxivError::Other(format!(
-                    "another process is already downloading {id_dir_name}"
-                )))
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Stale recovery: a crashed process left the lock behind.
+                    // Re-check every poll — the holder may drop it any moment.
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .map(|t| {
+                            t.elapsed()
+                                .map(|d| d.as_secs() > Self::STALE_AFTER_SECS)
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        // Loop immediately: next iteration re-creates or, if
+                        // another process grabbed it first, keeps waiting.
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(ArxivError::Other(format!(
+                            "another process is already downloading {id_dir_name} (waited {:?})",
+                            Self::WAIT_BUDGET
+                        )));
+                    }
+                    tokio::time::sleep(Self::POLL).await;
+                }
+                Err(e) => return Err(ArxivError::Io(e)),
             }
-            Err(e) => Err(ArxivError::Io(e)),
         }
     }
 }
@@ -149,7 +161,14 @@ pub async fn download_source(
     let paper_dir = downloads_dir.join(&folder_name);
 
     // P1.7: cross-process download lock — one downloader per paper at a time.
-    let _lock = DownloadLock::acquire(downloads_dir, &id_dir_name)?;
+    let _lock = DownloadLock::acquire(downloads_dir, &id_dir_name).await?;
+
+    // The winner may have finished while we waited for the lock — re-check
+    // the cache so we never re-download a paper another process just got
+    // (and never hit the move-to-target race on the same folder).
+    if id_dir.exists() && validate_cache(&id_dir)? {
+        return Ok((Some(id_dir), Some(folder_name.clone())));
+    }
 
     let tar_url = cfg.arxiv_src_url(arxiv_id);
     let response = cfg.get_with_retry(&tar_url).await?;

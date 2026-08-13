@@ -1,5 +1,17 @@
 # Changelog — arxivcat-cli
 
+## [0.11.11] — 2026-08-14
+
+- P2-3 (jury-ask A): `DownloadLock::acquire` now WAITS up to 30s (poll
+  500ms, re-checking stale every round) for a busy cross-process lock
+  instead of failing on the first collision — a transient "another process
+  is downloading this paper" no longer arms a 24h cooldown. After
+  acquiring, the cache is re-checked so a paper the winner just finished is
+  not re-downloaded. Regression test: busy lock released after 1s → success.
+- P2-5 read paths: `load_workspace_path` / `load_cached_token` /
+  `load_model_preference` now back up a corrupt config.json (warn +
+  `.corrupt-<ts>`) instead of silently swallowing it. Regression test added.
+
 ## [0.11.10] — 2026-08-14
 
 - Test-fidelity fix: the versioned-title wiremock test now feeds

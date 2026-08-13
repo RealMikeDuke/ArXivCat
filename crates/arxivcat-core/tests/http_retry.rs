@@ -112,6 +112,62 @@ async fn respects_retry_after_header() {
 }
 
 #[tokio::test]
+async fn busy_lock_is_waited_not_failed() {
+    // P2-3 (jury-ask A): a transient lock collision must WAIT for the
+    // holder instead of failing immediately (which would arm a 24h
+    // cooldown for a paper that is simply being downloaded elsewhere).
+    let server = MockServer::start().await;
+    let tar_bytes = {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut enc = GzEncoder::new(buf, Compression::fast());
+        {
+            let mut builder = tar::Builder::new(&mut enc);
+            let mut header = tar::Header::new_gnu();
+            header.set_path("main.tex").unwrap();
+            header.set_size(20);
+            header.set_cksum();
+            builder
+                .append(&header, &b"\\documentclass{article}"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        enc.finish().unwrap().into_inner()
+    };
+    Mock::given(method("GET"))
+        .and(path("/src/2501.20001"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(tar_bytes))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/pdf/2501.20001"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let cfg = test_cfg(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".locks")).unwrap();
+    // A fresh (non-stale) lock held by "another process".
+    let lock_path = dir.path().join(".locks").join("2501_20001.lock");
+    std::fs::write(&lock_path, "0").unwrap();
+
+    // Release the lock after 1s, as a real winner would.
+    let lock_path2 = lock_path.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let _ = std::fs::remove_file(&lock_path2);
+    });
+
+    let out = arxivcat_core::extract::source::download_source(&cfg, "2501.20001", dir.path())
+        .await
+        .expect("must succeed after waiting for the busy lock");
+    assert!(out.0.is_some(), "paper must be downloaded");
+    assert!(dir.path().join("2501_20001").join("main.tex").exists());
+}
+
+#[tokio::test]
 async fn versioned_download_writes_base_id_pdf() {
     // 2501.12948v2 must land as 2501.12948.pdf so the manifest scan
     // ({base_id}.pdf) and the on-disk file agree (expert review C).
