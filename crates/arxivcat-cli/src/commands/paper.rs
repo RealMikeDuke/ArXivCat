@@ -69,7 +69,25 @@ pub async fn cmd_list(cli: &Cli) {
     }
 }
 
-pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
+/// Best-effort automatic description generation (default-on since 0.11.12):
+/// missing key or any generation failure is logged to stderr and ignored —
+/// the download result and exit code never depend on it.
+async fn auto_describe(
+    http: &arxivcat_core::net::HttpConfig,
+    paper_dir: &std::path::Path,
+    arxiv_id: &str,
+    title: &str,
+) {
+    if let Err(e) = arxivcat_core::chat::description::build_description(
+        http, paper_dir, arxiv_id, title, None, None,
+    )
+    .await
+    {
+        eprintln!("warning: description generation failed for {arxiv_id}: {e}");
+    }
+}
+
+pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool) {
     let ws_path = get_ws(cli);
     let _ws = open_ws(cli);
 
@@ -151,6 +169,11 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
             .unwrap_or_default();
     let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);
 
+    // Default-on automatic description (disable with --no-describe).
+    if !no_describe {
+        auto_describe(&http, &output_dir, &arxiv_id, &title).await;
+    }
+
     if !cli.json {
         println!("{}", ok("extraction complete"));
         println!("arxiv ID: {arxiv_id}");
@@ -172,7 +195,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str) {
     }
 }
 
-pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
+pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: bool) {
     let ws_path = get_ws(cli);
     let ws = open_ws(cli);
     let downloads_dir = config::get_downloads_dir();
@@ -280,7 +303,18 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool) {
     for h in handles {
         if let Ok((paper, res)) = h.await {
             match res {
-                Ok(true) => success += 1,
+                Ok(true) => {
+                    success += 1;
+                    // Default-on automatic description, serialized here so
+                    // parallel workers never hammer the API together.
+                    if !no_describe {
+                        let http = http.clone();
+                        let folder = paper.folder.clone();
+                        let aid = paper.arxiv_id.clone();
+                        let ttl = paper.title.clone();
+                        auto_describe(&http, &folder, &aid, &ttl).await;
+                    }
+                }
                 Ok(false) => {
                     // cancelled mid-flight; not counted as failure
                 }

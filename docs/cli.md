@@ -93,7 +93,12 @@ The bracket column also shows `desc`/`-` for description.md presence (informatio
 [{"arxiv_id":"2501.12948","title":"DeepSeek-R1...","has_body":true,"description_ready":true,"is_complete":true,...}]
 ```
 
-#### `download <ID_OR_URL>`
+#### `download <ID_OR_URL> [--no-describe]`
+
+After extraction, a description is generated automatically (DeepSeek) unless
+`--no-describe` is given. Generation is best-effort: missing API key or any
+failure is warned on stderr and never affects the download result/exit code.
+
 
 Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → extract body.tex / appendix.tex → download PDF. AI description is NOT part of the download pipeline — use `paper describe` explicitly.
 
@@ -104,7 +109,12 @@ Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → 
 {"arxiv_id":"2501.12948","folder":"...","body_length":41953,"appendix_length":159056,"description_ready":true}
 ```
 
-#### `download-all [--jobs N] [--force]`
+#### `download-all [--jobs N] [--force] [--no-describe]`
+
+Descriptions are generated automatically for each successful download
+(serialized, so parallel workers never hammer the API), unless
+`--no-describe` is given. Same best-effort semantics as `download`.
+
 
 Process every pending paper (missing body.tex) concurrently (`--jobs`, default 4, range 1-8). Papers in the 24h retry cooldown are skipped and reported; `--force` bypasses the cooldown. Ctrl-C stops the batch and exits 130.
 

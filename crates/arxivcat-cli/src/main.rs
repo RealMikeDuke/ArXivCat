@@ -62,7 +62,13 @@ pub enum PaperCmd {
     List,
 
     #[command(about = "Download and extract a single paper")]
-    Download { id_or_url: String },
+    Download {
+        id_or_url: String,
+
+        /// Skip automatic description generation after download (default: on).
+        #[arg(long)]
+        no_describe: bool,
+    },
 
     #[command(about = "Download all pending papers in workspace")]
     DownloadAll {
@@ -74,6 +80,10 @@ pub enum PaperCmd {
         /// Ignore the 24h per-paper retry cooldown.
         #[arg(long)]
         force: bool,
+
+        /// Skip automatic description generation after download (default: on).
+        #[arg(long)]
+        no_describe: bool,
     },
 
     #[command(about = "Show paper preview")]
@@ -182,12 +192,15 @@ async fn main() {
         },
         Commands::Paper { cmd } => match cmd {
             PaperCmd::List => commands::paper::cmd_list(&cli).await,
-            PaperCmd::Download { id_or_url } => {
-                commands::paper::cmd_download(&cli, id_or_url).await
-            }
-            PaperCmd::DownloadAll { jobs, force } => {
-                commands::paper::cmd_download_all(&cli, *jobs, *force).await
-            }
+            PaperCmd::Download {
+                id_or_url,
+                no_describe,
+            } => commands::paper::cmd_download(&cli, id_or_url, *no_describe).await,
+            PaperCmd::DownloadAll {
+                jobs,
+                force,
+                no_describe,
+            } => commands::paper::cmd_download_all(&cli, *jobs, *force, *no_describe).await,
             PaperCmd::Preview { id_or_query, view } => {
                 commands::paper::cmd_preview(&cli, id_or_query, view).await
             }

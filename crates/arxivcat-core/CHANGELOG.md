@@ -1,5 +1,14 @@
 # Changelog — arxivcat-core
 
+## [0.11.12] — 2026-08-14
+
+- `paper download` / `download-all` now generate the description
+  automatically after a successful extraction (best-effort: missing key or
+  failure is stderr-warned, never affects the download result or exit
+  code). Opt out with `--no-describe`. download-all serializes generation
+  so workers never hammer the DeepSeek API concurrently. `paper describe`
+  remains available for explicit regeneration.
+
 ## [0.11.11] — 2026-08-14
 
 - P2-3 (jury-ask A): `DownloadLock::acquire` now WAITS up to 30s (poll
