@@ -73,3 +73,27 @@ Actual publishing needs a crates.io token and is a user decision.
 - P3-4: `token set` echoes the key in plain text (storage is 0600 + masked
   everywhere else). Deferred; `DEEPSEEK_API_KEY` env var is the recommended
   path for sensitive environments.
+
+## Deep/brief lock protocol — kernel flock (jury-burst 2026-08-16)
+
+Five content-based lock protocol iterations (O_EXCL + PID liveness + stale
+reclaim + read-back ownership) reached a correctness ceiling: µs-level
+reclaim races, ghost locks on crash-in-init, PID-reuse false liveness. A
+3:0 jury verdict moved deep/brief generation locks to kernel `flock`
+(LOCK_EX|LOCK_NB) on PERMANENT lock files (never unlinked — unlinking
+breaks mutual exclusion; redownload's directory wipe recreates the inode,
+which is safe). The kernel releases the lock on exit/crash/kill — no
+liveness probing, no stale reclaim, no ghost locks.
+
+Consequences recorded here so they are not re-litigated:
+- `.deep.lock` / `.brief.lock` are permanent zero-byte files per paper
+  (directory clutter by design).
+- Worker self-locks AFTER spawn; a concurrent spawner's worker fails
+  acquire and exits 0 (single payment).
+- Automatic generation is best-effort **at-least-once**: a failed request
+  may already be billed server-side, so batch retries can rarely repeat
+  round-1 cost. Documented in docs/cli.md.
+- Non-Unix platforms keep the content-based fallback (no flock); its
+  liveness probing is best-effort and crash leftovers may need manual
+  cleanup. Linux is the tested primary.
+

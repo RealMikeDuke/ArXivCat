@@ -39,7 +39,7 @@ arxivcat paper list --json
 ## Commands
 
 - `workspace open|scan` — manage the workspace folder
-- `paper list|download|download-all [--jobs N] [--force]|preview|note|strip|info|describe|open|pdf|remove|redownload` — manage papers
+- `paper list|download|download-all [--jobs N] [--force]|preview|note|strip|info|describe|deep-summarize|open|pdf|remove|redownload` — manage papers
 - `token status|set|validate` — manage the DeepSeek API key (optional, for AI features)
 
 ## Documentation

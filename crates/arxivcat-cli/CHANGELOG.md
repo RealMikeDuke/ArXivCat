@@ -1,5 +1,30 @@
 # Changelog — arxivcat-cli
 
+## [Unreleased]
+
+- `paper deep-summarize <id> [--force]` generates the deep recap in the
+  foreground; busy contract: another worker holds the lock → `status:busy`
+  JSON + exit 7 (refuses, never double-charges; `--force` cleanup happens
+  only after the lock and brief gates pass).
+- `download` / `download-all` gained `--no-deep` (deep recap default ON).
+  `--no-describe` now also gates deep: with no brief, deep is skipped
+  entirely (zero LLM calls — generate_deep's internal rebuild is unlocked).
+- `download-all` is a PROCESS SCHEDULER: one independent `internal
+  download-worker` process per pending paper (from the first download step),
+  `--jobs` concurrent, line-delimited JSON events on each worker's stdout
+  pipe (downloading/downloaded/brief_done/deep_spawned/done/failed), live
+  progress, aggregated success/failures/skipped, exit 0/8/1/130. Ctrl-C
+  kills the download workers; detached deep-workers (own process group)
+  survive.
+- Deep/brief concurrency: kernel `flock` on permanent `.deep.lock` /
+  `.brief.lock` (auto-released on crash/kill; no stale reclaim needed).
+  Worker self-locks; every entry re-checks readiness under the lock.
+  Automatic generation is best-effort at-least-once (a failed request may
+  already be billed server-side; batch retries can rarely repeat round-1
+  cost).
+- `internal deep-worker` / `internal download-worker` hidden commands
+  (detached worker infrastructure).
+
 ## [0.11.12] — 2026-08-14
 
 - `paper download` / `download-all` now generate the description

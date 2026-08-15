@@ -1,5 +1,23 @@
 # Changelog — arxivcat-core
 
+## [Unreleased]
+
+- Two-round summary pipeline: `brief_summary.md` (round 1) + `deep_summary.md`
+  (round 2) generated as a single continuing conversation (shared system
+  prompt + byte-identical user context → DeepSeek prefix-cache hit on round
+  2). `description.md` is lazily migrated to `brief_summary.md` on the first
+  write path; empty stubs never shadow a real legacy brief.
+- Raw LaTeX `tabular` extraction (`extract_tabular`): data tables are copied
+  verbatim from body/appendix into `deep_summary.md` — numbers are never
+  transcribed by the LLM.
+- Manifest: `files.brief_summary` / `files.deep_summary` + `deep_ready`
+  (`serde(default)`, schema-compatible; `description_ready` kept for the
+  frozen contract). `Paper` carries `deep_ready`.
+- `process_pending_paper` gained an `on_event` callback (downloading /
+  downloaded) for the detached-worker pipeline.
+- Chat context (`read_brief`) reads `brief_summary.md` with `description.md`
+  fallback so side/global chat never sees an empty description.
+
 ## [0.11.12] — 2026-08-14
 
 - `paper download` / `download-all` now generate the description
