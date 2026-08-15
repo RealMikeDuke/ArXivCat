@@ -196,10 +196,9 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
     // (jury-burst R2 F1). Holding our own lock while generating prevents a
     // concurrent spawner from double-charging us.
     let deep_lock = output_dir.join(".deep.lock");
-    if !no_deep && !deep_lock_held(&deep_lock) {
-        let _ = std::fs::write(&deep_lock, format!("{}\n", std::process::id()));
+    if !no_deep && acquire_deep_lock(&deep_lock) {
         auto_deep(&http, &output_dir, &arxiv_id, &title).await;
-        let _ = std::fs::remove_file(&deep_lock);
+        release_deep_lock(&deep_lock);
     }
 
     if !cli.json {
@@ -824,12 +823,11 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     if paper_dir.join(".deep_ready").exists() {
         return;
     }
-    // A live worker holds this lock (its own PID is inside). A stale lock
-    // (crashed / killed worker) is reclaimed here.
-    if deep_lock_held(&lock_path) {
+    // Atomic O_EXCL acquire (with stale-lock reclaim inside). Fails when a
+    // live worker holds the lock.
+    if !acquire_deep_lock(&lock_path) {
         return;
     }
-    let _ = std::fs::write(&lock_path, "0\n"); // placeholder, backfilled below
 
     let Some(exe) = std::env::current_exe().ok() else {
         let _ = std::fs::remove_file(&lock_path);
@@ -917,6 +915,43 @@ fn deep_lock_held(lock_path: &std::path::Path) -> bool {
     } else {
         let _ = std::fs::remove_file(lock_path);
         false
+    }
+}
+
+/// ATOMIC deep-lock acquisition (O_EXCL). Returns true if this process now
+/// owns the lock. On AlreadyExists the holder is checked for liveness; a
+/// stale lock is reclaimed and one bounded retry is made (jury-burst R3:
+/// check-then-write was a TOCTOU double-charge window).
+fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
+    use std::io::Write;
+    let acquire = |lp: &std::path::Path| -> bool {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        match opts.open(lp) {
+            Ok(mut f) => {
+                let _ = write!(f, "{}\n", std::process::id());
+                true
+            }
+            Err(_) => false,
+        }
+    };
+    if acquire(lock_path) {
+        return true;
+    }
+    // Already exists: live holder -> give up; stale -> reclaim + retry once.
+    if deep_lock_held(lock_path) {
+        return false;
+    }
+    acquire(lock_path)
+}
+
+/// Remove the lock ONLY if this process still owns it (content == own PID).
+/// An unconditional remove could delete a concurrent holder's lock.
+fn release_deep_lock(lock_path: &std::path::Path) {
+    if let Ok(content) = std::fs::read_to_string(lock_path) {
+        if content.trim() == std::process::id().to_string() {
+            let _ = std::fs::remove_file(lock_path);
+        }
     }
 }
 

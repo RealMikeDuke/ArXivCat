@@ -44,7 +44,12 @@ fn truncate_context(content: &str) -> String {
 fn read_brief(paper_dir: &std::path::Path) -> std::io::Result<String> {
     let brief = paper_dir.join("brief_summary.md");
     if brief.exists() {
-        return std::fs::read_to_string(&brief);
+        let content = std::fs::read_to_string(&brief)?;
+        // An empty stub must not shadow a real legacy description.md
+        // (jury-burst R3 MINOR: read path does not trigger lazy migration).
+        if !content.trim().is_empty() {
+            return Ok(content);
+        }
     }
     std::fs::read_to_string(paper_dir.join("description.md"))
 }

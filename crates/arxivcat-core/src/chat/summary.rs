@@ -156,7 +156,14 @@ pub async fn generate_deep(
     // produce it first (idempotent rebuild).
     let brief_path = paper_dir.join("brief_summary.md");
     let brief_text = if brief_path.exists() {
-        std::fs::read_to_string(&brief_path)?
+        let content = std::fs::read_to_string(&brief_path)?;
+        if content.trim().is_empty() {
+            // Empty stub — rebuild instead of using it as the round-1
+            // assistant message (jury-burst R3).
+            generate_brief(cfg, paper_dir, arxiv_id, title).await?
+        } else {
+            content
+        }
     } else {
         generate_brief(cfg, paper_dir, arxiv_id, title).await?
     };
