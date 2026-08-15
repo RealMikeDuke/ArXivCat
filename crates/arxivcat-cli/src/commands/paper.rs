@@ -69,10 +69,10 @@ pub async fn cmd_list(cli: &Cli) {
     }
 }
 
-/// Best-effort automatic description generation (default-on since 0.11.12):
-/// missing key or any generation failure is logged to stderr and ignored —
-/// the download result and exit code never depend on it.
-async fn auto_describe(
+/// Best-effort automatic brief generation (round 1): missing key or any
+/// generation failure is logged to stderr and ignored — the download result
+/// and exit code never depend on it.
+async fn auto_brief(
     http: &arxivcat_core::net::HttpConfig,
     paper_dir: &std::path::Path,
     arxiv_id: &str,
@@ -83,11 +83,26 @@ async fn auto_describe(
     )
     .await
     {
-        eprintln!("warning: description generation failed for {arxiv_id}: {e}");
+        eprintln!("warning: brief generation failed for {arxiv_id}: {e}");
     }
 }
 
-pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool) {
+/// Best-effort automatic deep recap (round 2): same best-effort contract as
+/// the brief — failure never affects the download result or exit code.
+async fn auto_deep(
+    http: &arxivcat_core::net::HttpConfig,
+    paper_dir: &std::path::Path,
+    arxiv_id: &str,
+    title: &str,
+) {
+    if let Err(e) =
+        arxivcat_core::chat::summary::generate_deep(http, paper_dir, arxiv_id, title).await
+    {
+        eprintln!("warning: deep summary generation failed for {arxiv_id}: {e}");
+    }
+}
+
+pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep: bool) {
     let ws_path = get_ws(cli);
     let _ws = open_ws(cli);
 
@@ -169,9 +184,15 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool) {
             .unwrap_or_default();
     let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);
 
-    // Default-on automatic description (disable with --no-describe).
+    // Default-on automatic brief (disable with --no-describe).
     if !no_describe {
-        auto_describe(&http, &output_dir, &arxiv_id, &title).await;
+        auto_brief(&http, &output_dir, &arxiv_id, &title).await;
+    }
+
+    // Default-on automatic deep recap (disable with --no-deep). Runs after
+    // the brief so round 2 hits the prefix cache; single downloads wait.
+    if !no_deep {
+        auto_deep(&http, &output_dir, &arxiv_id, &title).await;
     }
 
     if !cli.json {
@@ -184,18 +205,20 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool) {
         }
     } else {
         let desc_exists = output_dir.join(".description_ready").exists();
+        let deep_exists = output_dir.join(".deep_ready").exists();
         let json = serde_json::json!({
             "arxiv_id": arxiv_id,
             "folder": output_dir.to_string_lossy(),
             "body_length": output.body.len(),
             "appendix_length": output.appendix.as_ref().map(|a| a.len()),
             "description_ready": desc_exists,
+            "deep_ready": deep_exists,
         });
         println!("{}", serde_json::to_string_pretty(&json).unwrap());
     }
 }
 
-pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: bool) {
+pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: bool, no_deep: bool) {
     let ws_path = get_ws(cli);
     let ws = open_ws(cli);
     let downloads_dir = config::get_downloads_dir();
@@ -305,14 +328,19 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: boo
             match res {
                 Ok(true) => {
                     success += 1;
-                    // Default-on automatic description, serialized here so
-                    // parallel workers never hammer the API together.
+                    // Default-on automatic brief, serialized here so parallel
+                    // workers never hammer the API together.
                     if !no_describe {
                         let http = http.clone();
                         let folder = paper.folder.clone();
                         let aid = paper.arxiv_id.clone();
                         let ttl = paper.title.clone();
-                        auto_describe(&http, &folder, &aid, &ttl).await;
+                        auto_brief(&http, &folder, &aid, &ttl).await;
+                    }
+                    // Default-on automatic deep recap: detached worker
+                    // (spawn layer), never awaited — see spawn_deep_worker.
+                    if !no_deep {
+                        spawn_deep_worker(&paper.folder);
                     }
                 }
                 Ok(false) => {
@@ -607,6 +635,150 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
     }
 }
 
+/// Spawn a DETACHED worker to generate the deep recap for a paper dir.
+/// Never awaited: the caller moves on, the worker finishes in its own
+/// process group (survives Ctrl-C of the parent) and writes
+/// deep_summary.md + .deep_ready. stdout/stderr go to `.deep.log`.
+fn spawn_deep_worker(paper_dir: &std::path::Path) {
+    let Some(exe) = std::env::current_exe().ok() else {
+        eprintln!("warning: cannot locate own executable, skipping deep worker");
+        return;
+    };
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("internal").arg("deep-worker").arg(paper_dir);
+
+    // Own process group so parent Ctrl-C (SIGINT to the foreground group)
+    // does not kill in-flight workers.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    // Never inherit the parent's stdout/stderr: a held pipe would block the
+    // caller until EOF (contract pollution / apparent hang). Log instead.
+    cmd.stdin(std::process::Stdio::null());
+    let log_path = paper_dir.join(".deep.log");
+    match std::fs::File::create(&log_path) {
+        Ok(f) => {
+            if let Ok(dup) = f.try_clone() {
+                cmd.stdout(std::process::Stdio::from(f));
+                cmd.stderr(std::process::Stdio::from(dup));
+            } else {
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+            }
+        }
+        Err(_) => {
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+        }
+    }
+
+    if let Err(e) = cmd.spawn() {
+        eprintln!(
+            "warning: failed to spawn deep worker for {}: {e}",
+            paper_dir.display()
+        );
+    }
+}
+
+/// Detached worker entry (`arxivcat internal deep-worker <paper_dir>`).
+/// Reads arxiv_id/title from the manifest so user1 stays byte-identical to
+/// the brief that built the prefix cache; writes deep_summary.md + tables,
+/// sets .deep_ready, refreshes the manifest. Exit code 0 = done, non-zero =
+/// failure (see .deep.log).
+pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
+    use arxivcat_core::manifest::PaperManifest;
+    let dir = std::path::Path::new(paper_dir);
+    let m = match PaperManifest::load(dir) {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            eprintln!("deep-worker: no manifest at {paper_dir}");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("deep-worker: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("deep-worker: {e}");
+            std::process::exit(4);
+        }
+    };
+
+    if let Err(e) =
+        arxivcat_core::chat::summary::generate_deep(&http, dir, &m.arxiv_id, &m.title).await
+    {
+        eprintln!("deep-worker: {e}");
+        std::process::exit(7); // chat upstream
+    }
+
+    let _ = arxivcat_core::manifest::refresh_manifest(dir, &m.arxiv_id, &m.title);
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "arxiv_id": m.arxiv_id,
+                "deep_ready": true,
+            })
+        );
+    }
+}
+
+/// `paper deep-summarize <id> [--force]`: generate the deep recap in the
+/// foreground (explicit command — waiting is correct here). Rebuilds the
+/// brief first if missing (generate_deep does that internally).
+pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+
+    if force {
+        let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
+        let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
+    }
+
+    let http = match arxivcat_core::net::HttpConfig::new() {
+        Ok(c) => c,
+        Err(e) => crate::commands::die_err(cli, &e),
+    };
+    match arxivcat_core::chat::summary::generate_deep(
+        &http,
+        &paper.folder,
+        &paper.arxiv_id,
+        &paper.title,
+    )
+    .await
+    {
+        Ok(()) => {
+            let _ = arxivcat_core::manifest::refresh_manifest(
+                &paper.folder,
+                &paper.arxiv_id,
+                &paper.title,
+            );
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "deep_ready": true,
+                    })
+                );
+            } else {
+                println!(
+                    "deep summary generated: {}",
+                    paper.folder.join("deep_summary.md").display()
+                );
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
 pub async fn cmd_describe(cli: &Cli, id_or_query: &str) {
     let ws = open_ws(cli);
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
@@ -701,9 +873,11 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     let mut backup_failed = false;
     for name in [
         "note.txt",
-        "description.md",
+        "brief_summary.md",
+        "deep_summary.md",
         "arxiv_chats",
         ".description_ready",
+        ".deep_ready",
     ] {
         let src = folder.join(name);
         if src.exists() && std::fs::rename(&src, backup.join(name)).is_err() {
@@ -765,9 +939,11 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     let _ = std::fs::create_dir_all(&folder);
     for name in [
         "note.txt",
-        "description.md",
+        "brief_summary.md",
+        "deep_summary.md",
         "arxiv_chats",
         ".description_ready",
+        ".deep_ready",
     ] {
         let src = backup.join(name);
         if src.exists() {

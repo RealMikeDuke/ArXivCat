@@ -17,7 +17,12 @@ pub struct ManifestFiles {
     pub appendix: Option<String>,
     pub note: Option<String>,
     pub pdf: Option<String>,
-    pub description: Option<String>,
+    /// Brief summary (round 1). Old manifests name this `description`.
+    #[serde(alias = "description", default)]
+    pub brief_summary: Option<String>,
+    /// Deep recap (round 2).
+    #[serde(default)]
+    pub deep_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -32,6 +37,9 @@ pub struct PaperManifest {
     pub downloaded_at: String,
     pub files: ManifestFiles,
     pub description_ready: bool,
+    /// Deep recap generated (round 2 complete).
+    #[serde(default)]
+    pub deep_ready: bool,
     /// Last failure reason (for the 24h cooldown / --force flow, P1.4).
     #[serde(default)]
     pub last_error: Option<String>,
@@ -103,6 +111,11 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         }
     };
 
+    // Lazy migration (P1.1 philosophy): description.md -> brief_summary.md on
+    // the first write-path pass. Flag `.description_ready` keeps its name
+    // (manifest contract unchanged); it now means "brief ready".
+    lazy_migrate_brief(paper_dir);
+
     let base_id = strip_version(arxiv_id);
     let files = ManifestFiles {
         body: file_opt("body.tex"),
@@ -110,11 +123,13 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         note: file_opt("note.txt"),
         // download_pdf writes `{arxiv_id}.pdf` (never paper.pdf).
         pdf: file_opt(&format!("{base_id}.pdf")),
-        description: file_opt("description.md"),
+        brief_summary: file_opt("brief_summary.md"),
+        deep_summary: file_opt("deep_summary.md"),
     };
 
     let description_ready =
-        files.description.is_some() && paper_dir.join(".description_ready").is_file();
+        files.brief_summary.is_some() && paper_dir.join(".description_ready").is_file();
+    let deep_ready = files.deep_summary.is_some() && paper_dir.join(".deep_ready").is_file();
 
     // downloaded_at: set once on first scan (or preserve previous value).
     let downloaded_at = match prev.as_ref() {
@@ -134,9 +149,21 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         downloaded_at,
         files,
         description_ready,
+        deep_ready,
         last_error: prev.as_ref().and_then(|m| m.last_error.clone()),
         cooldown_until_ms: prev.as_ref().map(|m| m.cooldown_until_ms).unwrap_or(0),
     })
+}
+
+/// description.md -> brief_summary.md (one-shot, atomic rename). No-op when
+/// the new name already exists; leaves description.md alone if BOTH exist
+/// (user-edited file safety).
+pub fn lazy_migrate_brief(paper_dir: &Path) {
+    let brief = paper_dir.join("brief_summary.md");
+    let desc = paper_dir.join("description.md");
+    if !brief.exists() && desc.exists() {
+        let _ = std::fs::rename(&desc, &brief);
+    }
 }
 
 /// Refresh the manifest for an existing paper dir (lazy migration + inventory
@@ -175,6 +202,7 @@ pub fn mark_failure(paper_dir: &Path, error: &str) -> Result<()> {
                 downloaded_at: String::new(),
                 files: ManifestFiles::default(),
                 description_ready: false,
+                deep_ready: false,
                 last_error: None,
                 cooldown_until_ms: 0,
             }

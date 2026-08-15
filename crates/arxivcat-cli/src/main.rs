@@ -45,6 +45,9 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: TokenCmd,
     },
+
+    #[command(subcommand, hide = true)]
+    Internal(InternalCmd),
 }
 
 #[derive(Subcommand)]
@@ -65,9 +68,13 @@ pub enum PaperCmd {
     Download {
         id_or_url: String,
 
-        /// Skip automatic description generation after download (default: on).
+        /// Skip automatic brief generation after download (default: on).
         #[arg(long)]
         no_describe: bool,
+
+        /// Skip automatic deep recap generation after download (default: on).
+        #[arg(long)]
+        no_deep: bool,
     },
 
     #[command(about = "Download all pending papers in workspace")]
@@ -81,9 +88,14 @@ pub enum PaperCmd {
         #[arg(long)]
         force: bool,
 
-        /// Skip automatic description generation after download (default: on).
+        /// Skip automatic brief generation after download (default: on).
         #[arg(long)]
         no_describe: bool,
+
+        /// Skip automatic deep recap generation after download (default: on;
+        /// deep recaps are spawned as detached workers, not awaited).
+        #[arg(long)]
+        no_deep: bool,
     },
 
     #[command(about = "Show paper preview")]
@@ -120,6 +132,15 @@ pub enum PaperCmd {
     #[command(about = "Generate AI description for a paper (requires DeepSeek API key)")]
     Describe { id_or_query: String },
 
+    #[command(about = "Generate the deep recap for a paper (two-round LLM)")]
+    DeepSummarize {
+        id_or_query: String,
+
+        /// Regenerate even if a deep recap already exists.
+        #[arg(long)]
+        force: bool,
+    },
+
     #[command(about = "Remove a paper folder from the workspace")]
     Remove { id_or_query: String },
 
@@ -134,6 +155,14 @@ pub enum ChatCmd {
 
     #[command(about = "Start global chat over all workspace descriptions")]
     Global,
+}
+
+#[derive(Subcommand)]
+pub enum InternalCmd {
+    /// Detached worker: generate the deep recap for a paper dir (spawned by
+    /// download-all; reads arxiv_id/title from the manifest so the round-1
+    /// prefix stays byte-identical to the brief that built the cache).
+    DeepWorker { paper_dir: String },
 }
 
 #[derive(Subcommand)]
@@ -186,6 +215,11 @@ async fn main() {
     };
 
     match &cli.command {
+        Commands::Internal(cmd) => match cmd {
+            InternalCmd::DeepWorker { paper_dir } => {
+                commands::paper::cmd_deep_worker(&cli, paper_dir).await
+            }
+        },
         Commands::Workspace { cmd } => match cmd {
             WorkspaceCmd::Open { path } => commands::workspace::cmd_open(&cli, path).await,
             WorkspaceCmd::Scan => commands::workspace::cmd_scan(&cli).await,
@@ -195,12 +229,16 @@ async fn main() {
             PaperCmd::Download {
                 id_or_url,
                 no_describe,
-            } => commands::paper::cmd_download(&cli, id_or_url, *no_describe).await,
+                no_deep,
+            } => commands::paper::cmd_download(&cli, id_or_url, *no_describe, *no_deep).await,
             PaperCmd::DownloadAll {
                 jobs,
                 force,
                 no_describe,
-            } => commands::paper::cmd_download_all(&cli, *jobs, *force, *no_describe).await,
+                no_deep,
+            } => {
+                commands::paper::cmd_download_all(&cli, *jobs, *force, *no_describe, *no_deep).await
+            }
             PaperCmd::Preview { id_or_query, view } => {
                 commands::paper::cmd_preview(&cli, id_or_query, view).await
             }
@@ -218,6 +256,9 @@ async fn main() {
             PaperCmd::Info { id_or_query } => commands::paper::cmd_info(&cli, id_or_query).await,
             PaperCmd::Describe { id_or_query } => {
                 commands::paper::cmd_describe(&cli, id_or_query).await
+            }
+            PaperCmd::DeepSummarize { id_or_query, force } => {
+                commands::paper::cmd_deep_summarize(&cli, id_or_query, *force).await
             }
             PaperCmd::Remove { id_or_query } => {
                 commands::paper::cmd_remove(&cli, id_or_query).await

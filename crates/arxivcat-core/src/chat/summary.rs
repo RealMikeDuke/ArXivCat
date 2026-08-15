@@ -66,7 +66,9 @@ fn api_key() -> Result<String> {
 
 fn model_id() -> String {
     let model = config::load_model_preference();
-    crate::chat::deepseek::model_id(&model).unwrap_or("deepseek-v4-flash").to_string()
+    crate::chat::deepseek::model_id(&model)
+        .unwrap_or("deepseek-v4-flash")
+        .to_string()
 }
 
 async fn chat_once(
@@ -94,7 +96,9 @@ async fn chat_once(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(ArxivError::Chat(format!("summary API error {status}: {text}")));
+        return Err(ArxivError::Chat(format!(
+            "summary API error {status}: {text}"
+        )));
     }
 
     let json: serde_json::Value = response

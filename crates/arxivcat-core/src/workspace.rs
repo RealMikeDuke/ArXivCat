@@ -14,6 +14,7 @@ pub struct Paper {
     pub folder: PathBuf,
     pub has_body: bool,
     pub description_ready: bool,
+    pub deep_ready: bool,
     pub is_complete: bool,
 }
 
@@ -34,6 +35,7 @@ impl Paper {
                 .map(|f| folder.join(f).is_file())
                 .unwrap_or(false);
             let description_ready = m.description_ready && has_complete_description(folder);
+            let deep_ready = m.deep_ready && has_complete_deep(folder);
             return Some(Paper {
                 arxiv_id: m.arxiv_id,
                 title: m.title,
@@ -41,6 +43,7 @@ impl Paper {
                 folder: folder.to_path_buf(),
                 has_body,
                 description_ready,
+                deep_ready,
                 is_complete: has_body,
             });
         }
@@ -68,16 +71,27 @@ impl Paper {
             folder: folder.to_path_buf(),
             has_body,
             description_ready,
+            deep_ready: has_complete_deep(folder),
             is_complete,
         })
     }
 }
 
 fn has_complete_description(paper_dir: &Path) -> bool {
-    let desc = paper_dir.join("description.md");
     let flag = paper_dir.join(".description_ready");
-    if let Ok(meta) = std::fs::metadata(&desc) {
-        meta.len() > 0 && flag.exists()
+    for name in ["brief_summary.md", "description.md"] {
+        if let Ok(meta) = std::fs::metadata(paper_dir.join(name)) {
+            if meta.len() > 0 && flag.exists() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_complete_deep(paper_dir: &Path) -> bool {
+    if let Ok(meta) = std::fs::metadata(paper_dir.join("deep_summary.md")) {
+        meta.len() > 0 && paper_dir.join(".deep_ready").exists()
     } else {
         false
     }
@@ -288,13 +302,14 @@ pub async fn process_pending_paper(
 
 pub fn ensure_paper_meta_files(paper_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(paper_dir)?;
+    crate::manifest::lazy_migrate_brief(paper_dir);
     let note = paper_dir.join("note.txt");
     if !note.exists() {
         std::fs::write(&note, "")?;
     }
-    let desc = paper_dir.join("description.md");
-    if !desc.exists() {
-        std::fs::write(&desc, "")?;
+    let brief = paper_dir.join("brief_summary.md");
+    if !brief.exists() {
+        std::fs::write(&brief, "")?;
     }
     std::fs::create_dir_all(paper_dir.join("arxiv_chats"))?;
     Ok(())

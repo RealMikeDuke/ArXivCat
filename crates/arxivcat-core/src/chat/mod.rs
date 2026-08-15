@@ -1,7 +1,7 @@
 pub mod deepseek;
 pub mod description;
-pub mod summary;
 pub mod session;
+pub mod summary;
 
 use std::path::Path;
 
@@ -128,6 +128,7 @@ mod tests {
             folder,
             has_body: false,
             description_ready: false,
+            deep_ready: false,
             is_complete: false,
         }
     }

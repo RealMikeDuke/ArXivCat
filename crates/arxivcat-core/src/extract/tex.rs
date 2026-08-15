@@ -332,7 +332,6 @@ pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<Extr
     })
 }
 
-
 /// Extract raw `tabular` environments from body.tex/appendix.tex, verbatim
 /// (deterministic copy — tables never pass through the LLM).
 pub fn extract_tabular(paper_dir: &std::path::Path) -> Vec<String> {
@@ -497,7 +496,6 @@ Body text.
         assert!(body.contains("Abstract text."));
         assert!(appendix.is_none());
     }
-
 
     #[test]
     fn extracts_tabular_verbatim() {
