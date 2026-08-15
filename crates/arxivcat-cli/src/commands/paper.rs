@@ -929,7 +929,7 @@ fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
         opts.write(true).create_new(true);
         match opts.open(lp) {
             Ok(mut f) => {
-                let _ = write!(f, "{}\n", std::process::id());
+                let _ = writeln!(f, "{}", std::process::id());
                 true
             }
             Err(_) => false,
