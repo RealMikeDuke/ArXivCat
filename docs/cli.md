@@ -101,6 +101,11 @@ deep recap (`deep_summary.md`, round 2) are generated automatically
 best-effort: missing API key or any failure is warned on stderr and never
 affects the download result/exit code. Single downloads wait for both.
 
+**自动生成语义（best-effort at-least-once）**：batch 路径生成失败会重试
+（deep-worker 锁下重试）。由于一次失败请求可能已在服务端计费，瞬时故障
+时极端情况下 round-1 可能重复计费（罕见）。`--no-describe` 表示绝不生成
+brief——此时 deep 只在 brief 已存在时运行。
+
 Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → extract body.tex / appendix.tex → download PDF → brief → deep recap.
 
 **ID input**: Accepts raw IDs (`2501.12948`), versioned IDs (`2501.12948v2`), and URLs (`https://arxiv.org/abs/2501.12948`, `arxiv.org/pdf/2501.12948.pdf`, `www.arxiv.org/abs/2501.12948v3`).
