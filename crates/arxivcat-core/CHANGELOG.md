@@ -1,7 +1,9 @@
 # Changelog — arxivcat-core
 
-## [Unreleased]
+## [0.11.12] — 2026-08-16
 
+- `paper download` / `download-all` generate the brief automatically after
+  extraction (best-effort, opt out with `--no-describe`).
 - Two-round summary pipeline: `brief_summary.md` (round 1) + `deep_summary.md`
   (round 2) generated as a single continuing conversation (shared system
   prompt + byte-identical user context → DeepSeek prefix-cache hit on round
@@ -17,15 +19,6 @@
   downloaded) for the detached-worker pipeline.
 - Chat context (`read_brief`) reads `brief_summary.md` with `description.md`
   fallback so side/global chat never sees an empty description.
-
-## [0.11.12] — 2026-08-14
-
-- `paper download` / `download-all` now generate the description
-  automatically after a successful extraction (best-effort: missing key or
-  failure is stderr-warned, never affects the download result or exit
-  code). Opt out with `--no-describe`. download-all serializes generation
-  so workers never hammer the DeepSeek API concurrently. `paper describe`
-  remains available for explicit regeneration.
 
 ## [0.11.11] — 2026-08-14
 

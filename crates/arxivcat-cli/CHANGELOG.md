@@ -1,7 +1,9 @@
 # Changelog — arxivcat-cli
 
-## [Unreleased]
+## [0.11.12] — 2026-08-16
 
+- `paper download` / `download-all` generate the brief automatically after
+  extraction (best-effort, opt out with `--no-describe`).
 - `paper deep-summarize <id> [--force]` generates the deep recap in the
   foreground; busy contract: another worker holds the lock → `status:busy`
   JSON + exit 7 (refuses, never double-charges; `--force` cleanup happens
@@ -24,15 +26,6 @@
   cost).
 - `internal deep-worker` / `internal download-worker` hidden commands
   (detached worker infrastructure).
-
-## [0.11.12] — 2026-08-14
-
-- `paper download` / `download-all` now generate the description
-  automatically after a successful extraction (best-effort: missing key or
-  failure is stderr-warned, never affects the download result or exit
-  code). Opt out with `--no-describe`. download-all serializes generation
-  so workers never hammer the DeepSeek API concurrently. `paper describe`
-  remains available for explicit regeneration.
 
 ## [0.11.11] — 2026-08-14
 
