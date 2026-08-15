@@ -78,8 +78,15 @@ async fn auto_brief(
     arxiv_id: &str,
     title: &str,
 ) {
-    // Idempotence gate: a brief already exists — never pay for round 1
-    // again (jury-burst R6: brief had no lock and no done-check).
+    // Idempotence gate + flock: a brief already exists (or another process
+    // is generating it) — never pay for round 1 twice (jury-burst R7).
+    if paper_dir.join(".description_ready").exists() {
+        return;
+    }
+    let Some(_guard) = DeepLock::acquire_brief(paper_dir) else {
+        return; // someone else is generating the brief right now
+    };
+    // Re-check under the lock.
     if paper_dir.join(".description_ready").exists() {
         return;
     }
@@ -907,7 +914,19 @@ struct DeepLock {
 }
 
 impl DeepLock {
+    /// Deep-recap lock (`deep_summary.md` generation).
     fn acquire(paper_dir: &std::path::Path) -> Option<DeepLock> {
+        DeepLock::acquire_named(paper_dir, ".deep.lock")
+    }
+
+    /// Brief lock (`brief_summary.md` generation). Separate file so a brief
+    /// in flight never blocks (or is skipped by) the deep worker and vice
+    /// versa (jury-burst R7: round-1 had no lock at all).
+    fn acquire_brief(paper_dir: &std::path::Path) -> Option<DeepLock> {
+        DeepLock::acquire_named(paper_dir, ".brief.lock")
+    }
+
+    fn acquire_named(paper_dir: &std::path::Path, name: &str) -> Option<DeepLock> {
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
@@ -915,7 +934,7 @@ impl DeepLock {
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(paper_dir.join(".deep.lock"))
+                .open(paper_dir.join(name))
                 .ok()?;
             let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
             if rc == 0 {
@@ -926,7 +945,7 @@ impl DeepLock {
         }
         #[cfg(not(unix))]
         {
-            let lock_path = paper_dir.join(".deep.lock");
+            let lock_path = paper_dir.join(name);
             if acquire_deep_lock_content(&lock_path) {
                 Some(DeepLock {})
             } else {
@@ -938,6 +957,7 @@ impl DeepLock {
 
 /// Content-based fallback for non-Unix platforms (kept from the earlier
 /// protocol; kernel flock does not exist there).
+#[cfg(not(unix))]
 #[cfg(not(unix))]
 fn acquire_deep_lock_content(lock_path: &std::path::Path) -> bool {
     use std::io::Write;
@@ -969,12 +989,17 @@ fn acquire_deep_lock_content(lock_path: &std::path::Path) -> bool {
                 .parse::<i32>()
                 .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad pid"))
         })
-        .map(|pid| pid > 0 && unsafe { libc::kill(pid, 0) == 0 })
+        .map(|pid| pid > 0 && pid_alive(pid))
         .unwrap_or(true); // empty/garbage -> conservatively held
     if held {
         return false;
     }
     acquire(lock_path)
+}
+
+#[cfg(not(unix))]
+fn pid_alive(_pid: i32) -> bool {
+    true
 }
 
 /// Detached worker entry (`arxivcat internal deep-worker <paper_dir>`).
@@ -993,6 +1018,11 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     let Some(_guard) = DeepLock::acquire(dir) else {
         return;
     };
+    // Re-check under the lock: another generator may have finished between
+    // our spawner's gate and this acquire (jury-burst R7).
+    if dir.join(".deep_ready").exists() {
+        return;
+    }
     let die = |code: i32, msg: &str| -> ! {
         eprintln!("deep-worker: {msg}");
         std::process::exit(code);
@@ -1034,13 +1064,9 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
     // Enter the same flock protocol as workers: if another generation is
-    // in flight we refuse instead of double-charging (jury-burst R6). With
-    // --force we clear the done-marks BEFORE acquiring so regeneration is
-    // not skipped by the .deep_ready gate inside generate_deep.
-    if force {
-        let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
-        let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
-    }
+    // in flight we refuse instead of double-charging (jury-burst R6).
+    // ACQUIRE FIRST, then clear --force marks: cleaning before acquiring
+    // would destroy the current summary when we are refused (R7).
     let Some(_guard) = DeepLock::acquire(&paper.folder) else {
         if cli.json {
             println!(
@@ -1053,12 +1079,17 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
             );
         } else {
             eprintln!(
-                "deep summary for {} is already being generated (worker in progress); try later or with --force",
-                paper.arxiv_id
+                "deep summary for {} is already being generated (worker in progress); try later{}",
+                paper.arxiv_id,
+                if force { "" } else { " or with --force" }
             );
         }
         std::process::exit(crate::commands::EXIT_CHAT);
     };
+    if force {
+        let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
+        let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
+    }
 
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
