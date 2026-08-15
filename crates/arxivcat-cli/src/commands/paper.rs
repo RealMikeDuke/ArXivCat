@@ -78,6 +78,11 @@ async fn auto_brief(
     arxiv_id: &str,
     title: &str,
 ) {
+    // Idempotence gate: a brief already exists — never pay for round 1
+    // again (jury-burst R6: brief had no lock and no done-check).
+    if paper_dir.join(".description_ready").exists() {
+        return;
+    }
     if let Err(e) = arxivcat_core::chat::description::build_description(
         http, paper_dir, arxiv_id, title, None, None,
     )
@@ -195,10 +200,17 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
     // (concurrent download-all) makes us skip, a stale lock is reclaimed
     // (jury-burst R2 F1). Holding our own lock while generating prevents a
     // concurrent spawner from double-charging us.
-    let deep_lock = output_dir.join(".deep.lock");
-    if !no_deep && acquire_deep_lock(&deep_lock) {
-        auto_deep(&http, &output_dir, &arxiv_id, &title).await;
-        release_deep_lock(&deep_lock);
+    // Default-on automatic deep recap. `.deep_ready` gate matches the batch
+    // spawner ("Already done — never regenerate"); flock guards concurrency
+    // (a running worker -> skip, we do not double-charge).
+    if !no_deep && !output_dir.join(".deep_ready").exists() {
+        if let Some(_guard) = DeepLock::acquire(&output_dir) {
+            // Re-check under the lock: a worker may have finished between
+            // the check above and our acquire.
+            if !output_dir.join(".deep_ready").exists() {
+                auto_deep(&http, &output_dir, &arxiv_id, &title).await;
+            }
+        }
     }
 
     if !cli.json {
@@ -817,20 +829,16 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
 /// process group (survives Ctrl-C of the parent) and writes
 /// deep_summary.md + .deep_ready. stdout/stderr go to `.deep.log`.
 fn spawn_deep_worker(paper_dir: &std::path::Path) {
-    let lock_path = paper_dir.join(".deep.lock");
-
     // Already done — never regenerate.
     if paper_dir.join(".deep_ready").exists() {
         return;
     }
-    // Atomic O_EXCL acquire (with stale-lock reclaim inside). Fails when a
-    // live worker holds the lock.
-    if !acquire_deep_lock(&lock_path) {
-        return;
-    }
+    // The WORKER self-locks via flock after spawn; a concurrent spawner's
+    // worker will fail to acquire and exit 0 (no double generation).
+    // No lock is held or written here — the lock file is permanent and
+    // kernel-managed (jury-burst R6).
 
     let Some(exe) = std::env::current_exe().ok() else {
-        let _ = std::fs::remove_file(&lock_path);
         eprintln!("warning: cannot locate own executable, skipping deep worker");
         return;
     };
@@ -866,19 +874,8 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     }
 
     match cmd.spawn() {
-        Ok(child) => {
-            // Lock now records the WORKER's PID so liveness checks work —
-            // only if this spawner still owns it (a concurrent acquirer may
-            // have taken over during the window).
-            let owned = std::fs::read_to_string(&lock_path)
-                .map(|c| c.trim() == std::process::id().to_string())
-                .unwrap_or(false);
-            if owned {
-                let _ = std::fs::write(&lock_path, format!("{}\n", child.id()));
-            }
-        }
+        Ok(_child) => {}
         Err(e) => {
-            let _ = std::fs::remove_file(&lock_path);
             eprintln!(
                 "warning: failed to spawn deep worker for {}: {e}",
                 paper_dir.display()
@@ -887,60 +884,62 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     }
 }
 
-/// True if a process with `pid` exists (Unix: signal 0 probe; EPERM means
-/// the process exists but is owned by another user — still alive).
+/// True if a process with `pid` exists. Only used by the non-Unix
+/// content-based fallback (Unix uses kernel flock, no liveness probing).
+#[cfg(not(unix))]
 fn process_alive(pid: i32) -> bool {
+    let _ = pid;
+    true
+}
+
+/// Kernel-level deep-summary lock.
+///
+/// Unix: `flock(LOCK_EX | LOCK_NB)` — the lock file lives permanently
+/// (never unlinked; unlinking would create a new inode and break mutual
+/// exclusion), and the lock is released by the kernel when the owning
+/// process exits, crashes, or is killed. No PID liveness checks, no stale
+/// reclaim, no ghost locks (jury-burst R6: content-based lock protocol
+/// reached its correctness ceiling; flock moves it into the kernel).
+/// Non-Unix: fall back to the content-based protocol.
+struct DeepLock {
     #[cfg(unix)]
-    {
-        unsafe {
-            if libc::kill(pid, 0) == 0 {
-                return true;
+    _file: std::fs::File,
+}
+
+impl DeepLock {
+    fn acquire(paper_dir: &std::path::Path) -> Option<DeepLock> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(paper_dir.join(".deep.lock"))
+                .ok()?;
+            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if rc == 0 {
+                Some(DeepLock { _file: file })
+            } else {
+                None
             }
-            std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true
+        #[cfg(not(unix))]
+        {
+            let lock_path = paper_dir.join(".deep.lock");
+            if acquire_deep_lock_content(&lock_path) {
+                Some(DeepLock {})
+            } else {
+                None
+            }
+        }
     }
 }
 
-/// `true` if the deep lock is held by a LIVE process; reclaims stale locks
-/// (crashed/killed worker) so automatic deep recaps can retry. Shared by
-/// the batch spawner and the single-download path (jury-burst R2 F1).
-fn deep_lock_held(lock_path: &std::path::Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(lock_path) else {
-        return false;
-    };
-    let Ok(pid) = content.trim().parse::<i32>() else {
-        // Empty/garbage content = the create-then-write init window. NEVER
-        // delete here — reclaiming it lets a concurrent acquirer steal the
-        // lock and double-charge (jury-burst R4). Treat as held; the writer
-        // finishes (or the lock disappears) within microseconds.
-        return true;
-    };
-    if pid > 0 && process_alive(pid) {
-        true
-    } else {
-        // Re-read and compare before removing: the lock may have been
-        // replaced by a concurrent acquirer between our read and here
-        // (jury-burst R5 — narrows reclaim to two adjacent syscalls).
-        let still_ours = std::fs::read_to_string(lock_path)
-            .map(|c| c.trim() == content.trim())
-            .unwrap_or(false);
-        if still_ours {
-            let _ = std::fs::remove_file(lock_path);
-        }
-        false
-    }
-}
-
-/// ATOMIC deep-lock acquisition (O_EXCL). Returns true if this process now
-/// owns the lock. On AlreadyExists the holder is checked for liveness; a
-/// stale lock is reclaimed and one bounded retry is made (jury-burst R3:
-/// check-then-write was a TOCTOU double-charge window).
-fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
+/// Content-based fallback for non-Unix platforms (kept from the earlier
+/// protocol; kernel flock does not exist there).
+#[cfg(not(unix))]
+fn acquire_deep_lock_content(lock_path: &std::path::Path) -> bool {
     use std::io::Write;
     let acquire = |lp: &std::path::Path| -> bool {
         let mut opts = std::fs::OpenOptions::new();
@@ -948,18 +947,9 @@ fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
         match opts.open(lp) {
             Ok(mut f) => {
                 let _ = writeln!(f, "{}", std::process::id());
-                // Read-back ownership check: if the content is not our PID
-                // the lock was stolen/deleted during the init window — we do
-                // NOT own it (jury-burst R4).
-                let mut owned = false;
-                if let Ok(content) = std::fs::read_to_string(lp) {
-                    owned = content.trim() == std::process::id().to_string();
-                }
-                // The O_EXCL creator is the ONLY party that can safely
-                // remove its own empty/half-written lock: concurrent
-                // acquirers treat empty content as "held" and never delete
-                // (jury-burst R5 — otherwise a crash/ENOSPC between create
-                // and write leaves a permanent ghost lock).
+                let owned = std::fs::read_to_string(lp)
+                    .map(|c| c.trim() == std::process::id().to_string())
+                    .unwrap_or(false);
                 if !owned {
                     let _ = std::fs::remove_file(lp);
                 }
@@ -971,21 +961,20 @@ fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
     if acquire(lock_path) {
         return true;
     }
-    // Already exists: live holder -> give up; stale -> reclaim + retry once.
-    if deep_lock_held(lock_path) {
+    // Existing lock: parse + liveness probe; stale is reclaimed (read-back
+    // compared before removal), then one bounded retry.
+    let held = std::fs::read_to_string(lock_path)
+        .and_then(|c| {
+            c.trim()
+                .parse::<i32>()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad pid"))
+        })
+        .map(|pid| pid > 0 && unsafe { libc::kill(pid, 0) == 0 })
+        .unwrap_or(true); // empty/garbage -> conservatively held
+    if held {
         return false;
     }
     acquire(lock_path)
-}
-
-/// Remove the lock ONLY if this process still owns it (content == own PID).
-/// An unconditional remove could delete a concurrent holder's lock.
-fn release_deep_lock(lock_path: &std::path::Path) {
-    if let Ok(content) = std::fs::read_to_string(lock_path) {
-        if content.trim() == std::process::id().to_string() {
-            let _ = std::fs::remove_file(lock_path);
-        }
-    }
 }
 
 /// Detached worker entry (`arxivcat internal deep-worker <paper_dir>`).
@@ -996,20 +985,16 @@ fn release_deep_lock(lock_path: &std::path::Path) {
 pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     use arxivcat_core::manifest::PaperManifest;
     let dir = std::path::Path::new(paper_dir);
-    let lock_path = dir.join(".deep.lock");
-    // `std::process::exit` does NOT run Drop, so every exit path removes the
-    // lock explicitly — otherwise a single API failure would permanently
-    // disable automatic deep recaps for this paper (jury-review R1 #1).
+
+    // Self-lock: a concurrent worker already generating this paper holds
+    // the flock -> we exit 0 (someone is doing the job; no double charge).
+    // The kernel releases the lock on exit/crash/kill — no explicit removal
+    // needed anywhere (jury-burst R6).
+    let Some(_guard) = DeepLock::acquire(dir) else {
+        return;
+    };
     let die = |code: i32, msg: &str| -> ! {
         eprintln!("deep-worker: {msg}");
-        // Only remove the lock if WE own it (content == our PID); a
-        // concurrent acquirer may hold it now.
-        let owned = std::fs::read_to_string(&lock_path)
-            .map(|c| c.trim() == std::process::id().to_string())
-            .unwrap_or(false);
-        if owned {
-            let _ = std::fs::remove_file(&lock_path);
-        }
         std::process::exit(code);
     };
     let m = match PaperManifest::load(dir) {
@@ -1030,12 +1015,6 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     }
 
     let _ = arxivcat_core::manifest::refresh_manifest(dir, &m.arxiv_id, &m.title);
-    let owned = std::fs::read_to_string(&lock_path)
-        .map(|c| c.trim() == std::process::id().to_string())
-        .unwrap_or(false);
-    if owned {
-        let _ = std::fs::remove_file(&lock_path);
-    }
     if cli.json {
         println!(
             "{}",
@@ -1054,10 +1033,32 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
     let ws = open_ws(cli);
     let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
 
+    // Enter the same flock protocol as workers: if another generation is
+    // in flight we refuse instead of double-charging (jury-burst R6). With
+    // --force we clear the done-marks BEFORE acquiring so regeneration is
+    // not skipped by the .deep_ready gate inside generate_deep.
     if force {
         let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
         let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
     }
+    let Some(_guard) = DeepLock::acquire(&paper.folder) else {
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "arxiv_id": paper.arxiv_id,
+                    "status": "busy",
+                    "message": "another deep generation is already running for this paper",
+                })
+            );
+        } else {
+            eprintln!(
+                "deep summary for {} is already being generated (worker in progress); try later or with --force",
+                paper.arxiv_id
+            );
+        }
+        std::process::exit(crate::commands::EXIT_CHAT);
+    };
 
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
