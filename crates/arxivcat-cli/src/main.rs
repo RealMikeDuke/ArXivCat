@@ -163,6 +163,19 @@ pub enum InternalCmd {
     /// download-all; reads arxiv_id/title from the manifest so the round-1
     /// prefix stays byte-identical to the brief that built the cache).
     DeepWorker { paper_dir: String },
+
+    /// Full download pipeline as an independent process (spawned by
+    /// download-all). Emits line-delimited JSON events on stdout:
+    /// downloading/downloaded/brief_done/deep_spawned/done/failed.
+    DownloadWorker {
+        paper_dir: String,
+
+        #[arg(long)]
+        no_describe: bool,
+
+        #[arg(long)]
+        no_deep: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -218,6 +231,13 @@ async fn main() {
         Commands::Internal(cmd) => match cmd {
             InternalCmd::DeepWorker { paper_dir } => {
                 commands::paper::cmd_deep_worker(&cli, paper_dir).await
+            }
+            InternalCmd::DownloadWorker {
+                paper_dir,
+                no_describe,
+                no_deep,
+            } => {
+                commands::paper::cmd_download_worker(&cli, paper_dir, *no_describe, *no_deep).await
             }
         },
         Commands::Workspace { cmd } => match cmd {

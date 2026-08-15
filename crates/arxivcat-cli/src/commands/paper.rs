@@ -218,14 +218,120 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
     }
 }
 
-pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: bool, no_deep: bool) {
-    let ws_path = get_ws(cli);
-    let ws = open_ws(cli);
+/// Full download pipeline as an independent process (spawned by
+/// download-all). Emits line-delimited JSON events on stdout:
+/// downloading / downloaded / brief_done / deep_spawned / done / failed.
+/// Exit code 0 = paper ready, non-zero = failed (contract codes).
+pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool, no_deep: bool) {
+    use arxivcat_core::manifest::PaperManifest;
+    let dir = std::path::Path::new(paper_dir);
+
+    // Manifest is the single source of truth, but legacy/raw pending folders
+    // may not have one yet — fall back to folder-name parsing so the worker
+    // can bootstrap the first download (refresh_manifest writes it after).
+    let (arxiv_id, title) = match PaperManifest::load(dir) {
+        Ok(Some(m)) => (m.arxiv_id, m.title),
+        _ => {
+            let folder_name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            arxivcat_core::manifest::parse_legacy_folder(&folder_name)
+        }
+    };
+
+    let ws_path = dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let downloads_dir = config::get_downloads_dir();
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
-        Err(e) => crate::commands::die_err(cli, &e),
+        Err(e) => {
+            eprintln!("download-worker: {e}");
+            std::process::exit(4);
+        }
     };
+
+    let emit = |name: &str| {
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": name,
+                "arxiv_id": arxiv_id,
+            })
+        );
+    };
+
+    let folder_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let paper = arxivcat_core::workspace::Paper {
+        arxiv_id: arxiv_id.clone(),
+        title: title.clone(),
+        folder_name: folder_name.clone(),
+        folder: dir.to_path_buf(),
+        has_body: dir.join("body.tex").exists(),
+        description_ready: false,
+        deep_ready: false,
+        is_complete: false,
+    };
+
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let ev = |name: &str| emit(name);
+
+    let result = arxivcat_core::workspace::process_pending_paper(
+        &http,
+        &paper,
+        &downloads_dir,
+        &ws_path,
+        &cancel,
+        Some(&ev),
+    )
+    .await;
+
+    match result {
+        Ok(true) | Ok(false) => {
+            if !no_describe {
+                auto_brief(&http, dir, &arxiv_id, &title).await;
+                emit("brief_done");
+            }
+            if !no_deep {
+                spawn_deep_worker(dir);
+                emit("deep_spawned");
+            }
+            emit("done");
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            // Keep identity in manifest, arm the 24h cooldown (C2).
+            let _ = arxivcat_core::manifest::refresh_manifest(dir, &arxiv_id, &title);
+            let _ = arxivcat_core::manifest::mark_failure(dir, &msg);
+            let code = crate::commands::exit_code_for(&e);
+            let kind = crate::commands::kind_for(&e);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event": "failed",
+                    "arxiv_id": arxiv_id,
+                    "code": code,
+                    "kind": kind,
+                    "message": msg,
+                    "retryable": crate::commands::retryable_for(kind, &msg),
+                })
+            );
+            std::process::exit(code);
+        }
+    }
+}
+
+/// Batch download as a PROCESS SCHEDULER: spawns one independent
+/// `internal download-worker` process per pending paper (from the first
+/// download step), up to `jobs` at a time, reads line-delimited JSON events
+/// from each worker's stdout pipe for live progress, then aggregates.
+pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: bool, no_deep: bool) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command as TokioCommand;
+
+    let ws = open_ws(cli);
 
     // Defensive clamp — clap already validates 1..=8, but keep this as a
     // library-facing guard (P3-3 known-issue; restored after jury-review).
@@ -276,103 +382,137 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: boo
         pending.len()
     );
 
-    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    // Real Ctrl-C: flip the flag; workers observe it and the command exits 130.
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let children: std::sync::Arc<std::sync::Mutex<Vec<tokio::process::Child>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Real Ctrl-C: kill every worker process, then exit 130.
     {
-        let cancel = cancel_flag.clone();
+        let cancelled = cancelled.clone();
+        let children = children.clone();
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+            for c in children.lock().unwrap().iter_mut() {
+                let _ = c.start_kill();
+            }
         });
     }
 
+    let exe = std::env::current_exe().expect("cannot locate own executable");
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(jobs as usize));
     let mut handles = Vec::new();
     let total = pending.len();
 
     for paper in pending {
-        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
         let permit = match sem.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => break,
         };
-        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
             drop(permit);
             break;
         }
 
-        let ws_path = ws_path.clone();
-        let downloads_dir = downloads_dir.clone();
-        let http = http.clone();
-        let cancel = cancel_flag.clone();
+        let exe = exe.clone();
+        let children = children.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            let res = arxivcat_core::workspace::process_pending_paper(
-                &http,
-                &paper,
-                &downloads_dir,
-                &ws_path,
-                &cancel,
-            )
-            .await;
-            (paper, res)
+            let mut cmd = TokioCommand::new(&exe);
+            cmd.arg("internal")
+                .arg("download-worker")
+                .arg(&paper.folder);
+            if no_describe {
+                cmd.arg("--no-describe");
+            }
+            if no_deep {
+                cmd.arg("--no-deep");
+            }
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::inherit());
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    let aid = paper.arxiv_id.clone();
+                    return (
+                        paper,
+                        false,
+                        Some(serde_json::json!({
+                            "id": aid,
+                            "code": crate::commands::EXIT_IO,
+                            "kind": "io",
+                            "message": format!("cannot spawn download-worker: {e}"),
+                            "retryable": false,
+                        })),
+                    );
+                }
+            };
+
+            let stdout = match child.stdout.take() {
+                Some(o) => o,
+                None => {
+                    let _ = child.start_kill();
+                    let aid = paper.arxiv_id.clone();
+                    return (
+                        paper,
+                        false,
+                        Some(serde_json::json!({
+                            "id": aid,
+                            "code": crate::commands::EXIT_IO,
+                            "kind": "io",
+                            "message": "no stdout pipe from worker".to_string(),
+                            "retryable": false,
+                        })),
+                    );
+                }
+            };
+
+            children.lock().unwrap().push(child);
+
+            let mut lines = BufReader::new(stdout).lines();
+            let mut done = false;
+            let mut failed: Option<serde_json::Value> = None;
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    match v["event"].as_str() {
+                        Some("done") => done = true,
+                        Some("failed") => failed = Some(v),
+                        Some("downloaded") => {
+                            eprintln!("  [{}] downloaded", v["arxiv_id"].as_str().unwrap_or("?"))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            (paper, done, failed)
         }));
     }
 
     let mut success = 0usize;
     let mut failures: Vec<serde_json::Value> = Vec::new();
     for h in handles {
-        if let Ok((paper, res)) = h.await {
-            match res {
-                Ok(true) => {
-                    success += 1;
-                    // Default-on automatic brief, serialized here so parallel
-                    // workers never hammer the API together.
-                    if !no_describe {
-                        let http = http.clone();
-                        let folder = paper.folder.clone();
-                        let aid = paper.arxiv_id.clone();
-                        let ttl = paper.title.clone();
-                        auto_brief(&http, &folder, &aid, &ttl).await;
-                    }
-                    // Default-on automatic deep recap: detached worker
-                    // (spawn layer), never awaited — see spawn_deep_worker.
-                    if !no_deep {
-                        spawn_deep_worker(&paper.folder);
-                    }
-                }
-                Ok(false) => {
-                    // cancelled mid-flight; not counted as failure
-                }
-                Err(e) => {
-                    let code = crate::commands::exit_code_for(&e);
-                    let kind = crate::commands::kind_for(&e);
-                    let msg = e.to_string();
-                    // Keep the paper's identity in the manifest first, then
-                    // arm the 24h cooldown (C2: legacy folders must not get
-                    // an empty-ID paper.json on failure).
-                    let _ = arxivcat_core::manifest::refresh_manifest(
-                        &paper.folder,
-                        &paper.arxiv_id,
-                        &paper.title,
-                    );
-                    let _ = arxivcat_core::manifest::mark_failure(&paper.folder, &msg);
-                    eprintln!("{} failed: {msg}", paper.arxiv_id);
+        if let Ok((paper, done, failed)) = h.await {
+            match failed {
+                Some(f) => failures.push(f),
+                None if done => success += 1,
+                None => {
+                    // Worker exited without a terminal event (crash/kill).
                     failures.push(serde_json::json!({
                         "id": paper.arxiv_id,
-                        "code": code,
-                        "kind": kind,
-                        "message": msg,
-                        "retryable": crate::commands::retryable_for(kind, &msg),
+                        "code": crate::commands::EXIT_OTHER,
+                        "kind": "other",
+                        "message": "download-worker exited without a result event".to_string(),
+                        "retryable": false,
                     }));
                 }
             }
         }
     }
 
-    let cancelled = cancel_flag.load(std::sync::atomic::Ordering::Relaxed);
+    let cancelled = cancelled.load(std::sync::atomic::Ordering::Relaxed);
 
     if cli.json {
         println!(
@@ -385,6 +525,13 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: boo
                 "skipped": skipped.len(),
                 "failures": failures,
             })
+        );
+    } else {
+        eprintln!(
+            "done: {} ok, {} failed, {} skipped",
+            success,
+            failures.len(),
+            skipped.len()
         );
     }
 

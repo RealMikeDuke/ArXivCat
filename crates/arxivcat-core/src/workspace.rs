@@ -258,7 +258,14 @@ pub async fn process_pending_paper(
     downloads_dir: &Path,
     workspace_path: &Path,
     cancel_flag: &std::sync::atomic::AtomicBool,
+    on_event: Option<&(dyn Fn(&str) + Sync)>,
 ) -> Result<bool> {
+    let ev = |name: &str| {
+        if let Some(cb) = on_event {
+            cb(name);
+        }
+    };
+
     if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(false);
     }
@@ -269,6 +276,8 @@ pub async fn process_pending_paper(
     if paper.has_body {
         return Ok(true);
     }
+
+    ev("downloading");
 
     let (paper_dir_opt, _) =
         crate::extract::source::download_source(cfg, arxiv_id, downloads_dir).await?;
@@ -283,6 +292,7 @@ pub async fn process_pending_paper(
     }
 
     crate::extract::tex::extract_body_from_dir(&paper_dir, &out_dir)?;
+    ev("downloaded");
 
     if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(false);
