@@ -627,7 +627,8 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
     for (file, label) in &[
         ("body.tex", "body.tex"),
         ("appendix.tex", "appendix.tex"),
-        ("description.md", "description.md"),
+        ("brief_summary.md", "brief_summary.md"),
+        ("deep_summary.md", "deep_summary.md"),
         ("note.txt", "note.txt"),
     ] {
         let path = paper.folder.join(file);
@@ -643,6 +644,18 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
 /// process group (survives Ctrl-C of the parent) and writes
 /// deep_summary.md + .deep_ready. stdout/stderr go to `.deep.log`.
 fn spawn_deep_worker(paper_dir: &std::path::Path) {
+    // Already done or already queued — never double-spawn.
+    if paper_dir.join(".deep_ready").exists() {
+        return;
+    }
+    if paper_dir.join(".deep.lock").exists() {
+        return;
+    }
+    let _ = std::fs::write(
+        paper_dir.join(".deep.lock"),
+        format!("{}\n", std::process::id()),
+    );
+
     let Some(exe) = std::env::current_exe().ok() else {
         eprintln!("warning: cannot locate own executable, skipping deep worker");
         return;
@@ -722,6 +735,7 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     }
 
     let _ = arxivcat_core::manifest::refresh_manifest(dir, &m.arxiv_id, &m.title);
+    let _ = std::fs::remove_file(dir.join(".deep.lock"));
     if cli.json {
         println!(
             "{}",
@@ -984,7 +998,12 @@ mod tests {
         assert_eq!(resolve_view_file("body").unwrap(), "body.tex");
         assert_eq!(resolve_view_file("appendix").unwrap(), "appendix.tex");
         assert_eq!(resolve_view_file("note").unwrap(), "note.txt");
-        assert_eq!(resolve_view_file("description").unwrap(), "description.md");
+        assert_eq!(
+            resolve_view_file("description").unwrap(),
+            "brief_summary.md"
+        );
+        assert_eq!(resolve_view_file("brief").unwrap(), "brief_summary.md");
+        assert_eq!(resolve_view_file("deep").unwrap(), "deep_summary.md");
     }
 
     #[test]
