@@ -891,14 +891,6 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     }
 }
 
-/// True if a process with `pid` exists. Only used by the non-Unix
-/// content-based fallback (Unix uses kernel flock, no liveness probing).
-#[cfg(not(unix))]
-fn process_alive(pid: i32) -> bool {
-    let _ = pid;
-    true
-}
-
 /// Kernel-level deep-summary lock.
 ///
 /// Unix: `flock(LOCK_EX | LOCK_NB)` — the lock file lives permanently
@@ -1038,6 +1030,10 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
         Err(e) => die(4, &e.to_string()),
     };
 
+    // Ensure the brief exists BEFORE deep — generate_deep would otherwise
+    // rebuild it internally with NO lock, paying round 1 concurrently
+    // (jury-burst R8). auto_brief is itself .brief.lock-guarded + idempotent.
+    let _ = auto_brief(&http, dir, &m.arxiv_id, &m.title).await;
     if let Err(e) =
         arxivcat_core::chat::summary::generate_deep(&http, dir, &m.arxiv_id, &m.title).await
     {
@@ -1095,6 +1091,9 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
         Ok(c) => c,
         Err(e) => crate::commands::die_err(cli, &e),
     };
+    // Ensure the brief exists BEFORE deep (same rationale as deep-worker;
+    // jury-burst R8 — generate_deep's internal rebuild is unlocked).
+    let _ = auto_brief(&http, &paper.folder, &paper.arxiv_id, &paper.title).await;
     match arxivcat_core::chat::summary::generate_deep(
         &http,
         &paper.folder,
