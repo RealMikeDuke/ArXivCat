@@ -1,7 +1,7 @@
 # ArXivCat 技术架构
 
 > 内部开发文档：理解系统如何工作、代码在哪里、改代码时别踩什么坑。
-> 用户手册见 [cli.md](cli.md)；决策档案见 [maintenance-decisions.md](maintenance-decisions.md)。
+> 入口导航见 [meta.md](meta.md)；用户手册见 [cli.md](cli.md)；决策档案见 [maintenance-decisions.md](maintenance-decisions.md)。
 
 ## 1. 系统总览
 
