@@ -44,6 +44,7 @@ arxivcat paper list --json
 
 ## Documentation
 
+- [docs/architecture.md](docs/architecture.md) — technical architecture for internal developers: process model, flock locking, AI pipeline, code map, pitfalls
 - [docs/cli.md](docs/cli.md) — full CLI manual: commands, JSON schemas, **exit-code contract**, ID matching
 - [docs/maintenance-decisions.md](docs/maintenance-decisions.md) — maintainer decisions (error kinds, publish order)
 - [docs/gui-revival.md](docs/gui-revival.md) — GUI revival manual (legacy-gui branch)
