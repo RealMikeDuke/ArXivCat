@@ -161,7 +161,17 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
 pub fn lazy_migrate_brief(paper_dir: &Path) {
     let brief = paper_dir.join("brief_summary.md");
     let desc = paper_dir.join("description.md");
-    if !brief.exists() && desc.exists() {
+    // An EMPTY brief stub (created by ensure_paper_meta_files before the
+    // legacy file was restored) must not shadow a real description.md —
+    // otherwise chat/deep read an empty brief (jury-burst R2 F2).
+    let brief_empty = brief.exists()
+        && std::fs::metadata(&brief)
+            .map(|m| m.len() == 0)
+            .unwrap_or(false);
+    if desc.exists() && (!brief.exists() || brief_empty) {
+        if brief_empty {
+            let _ = std::fs::remove_file(&brief);
+        }
         let _ = std::fs::rename(&desc, &brief);
     }
 }
@@ -303,5 +313,18 @@ mod tests {
         assert!(m.deep_ready);
         assert_eq!(m.files.brief_summary.as_deref(), Some("brief_summary.md"));
         assert_eq!(m.files.deep_summary.as_deref(), Some("deep_summary.md"));
+    }
+
+    #[test]
+    fn lazy_migrate_replaces_empty_stub_with_real_description() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("brief_summary.md"), "").unwrap();
+        std::fs::write(dir.path().join("description.md"), "real brief").unwrap();
+        lazy_migrate_brief(dir.path());
+        assert!(!dir.path().join("description.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("brief_summary.md")).unwrap(),
+            "real brief"
+        );
     }
 }

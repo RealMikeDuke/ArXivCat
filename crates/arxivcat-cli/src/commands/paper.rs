@@ -191,10 +191,15 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
 
     // Default-on automatic deep recap (disable with --no-deep). Runs after
     // the brief so round 2 hits the prefix cache; single downloads wait.
-    // If a detached worker already owns .deep.lock (e.g. a concurrent
-    // download-all), skip — it will finish the job (jury-review R1 #6).
-    if !no_deep && !output_dir.join(".deep.lock").exists() {
+    // Guarded by the same lock as the batch spawner: a live worker's lock
+    // (concurrent download-all) makes us skip, a stale lock is reclaimed
+    // (jury-burst R2 F1). Holding our own lock while generating prevents a
+    // concurrent spawner from double-charging us.
+    let deep_lock = output_dir.join(".deep.lock");
+    if !no_deep && !deep_lock_held(&deep_lock) {
+        let _ = std::fs::write(&deep_lock, format!("{}\n", std::process::id()));
         auto_deep(&http, &output_dir, &arxiv_id, &title).await;
+        let _ = std::fs::remove_file(&deep_lock);
     }
 
     if !cli.json {
@@ -306,7 +311,7 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
             // Extracted nothing usable (no body.tex) — that is NOT success
             // (jury-review R1 #4). Report failed so the batch does not
             // count it as done; a retry can pick it up later.
-            let msg = "download completed but no body.tex was produced".to_string();
+            let msg = "download produced no usable body".to_string();
             let _ = arxivcat_core::manifest::refresh_manifest(dir, &arxiv_id, &title);
             let _ = arxivcat_core::manifest::mark_failure(dir, &msg);
             println!(
@@ -821,13 +826,8 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     }
     // A live worker holds this lock (its own PID is inside). A stale lock
     // (crashed / killed worker) is reclaimed here.
-    if let Ok(content) = std::fs::read_to_string(&lock_path) {
-        if let Ok(pid) = content.trim().parse::<i32>() {
-            if pid > 0 && process_alive(pid) {
-                return;
-            }
-        }
-        let _ = std::fs::remove_file(&lock_path);
+    if deep_lock_held(&lock_path) {
+        return;
     }
     let _ = std::fs::write(&lock_path, "0\n"); // placeholder, backfilled below
 
@@ -882,16 +882,41 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
     }
 }
 
-/// True if a process with `pid` exists (Unix: signal 0 probe).
+/// True if a process with `pid` exists (Unix: signal 0 probe; EPERM means
+/// the process exists but is owned by another user — still alive).
 fn process_alive(pid: i32) -> bool {
     #[cfg(unix)]
     {
-        unsafe { libc::kill(pid, 0) == 0 }
+        unsafe {
+            if libc::kill(pid, 0) == 0 {
+                return true;
+            }
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
     }
     #[cfg(not(unix))]
     {
         let _ = pid;
         true
+    }
+}
+
+/// `true` if the deep lock is held by a LIVE process; reclaims stale locks
+/// (crashed/killed worker) so automatic deep recaps can retry. Shared by
+/// the batch spawner and the single-download path (jury-burst R2 F1).
+fn deep_lock_held(lock_path: &std::path::Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(lock_path) else {
+        return false;
+    };
+    let Ok(pid) = content.trim().parse::<i32>() else {
+        let _ = std::fs::remove_file(lock_path);
+        return false;
+    };
+    if pid > 0 && process_alive(pid) {
+        true
+    } else {
+        let _ = std::fs::remove_file(lock_path);
+        false
     }
 }
 
