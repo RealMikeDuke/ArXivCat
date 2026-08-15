@@ -1,5 +1,6 @@
 pub mod deepseek;
 pub mod description;
+pub mod summary;
 pub mod session;
 
 use std::path::Path;

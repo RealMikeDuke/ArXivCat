@@ -1,117 +1,21 @@
 use std::path::Path;
 
-use crate::config;
-use crate::error::{ArxivError, Result};
+use crate::error::Result;
 
-const SYSTEM_PROMPT: &str = "You write structured markdown briefs for arXiv papers. The brief will later be used for semantic paper search inside a local workspace. Be detailed but compact, faithful to the provided paper text, and emphasize searchable technical concepts. Output markdown only. Use these sections exactly: # Overview, ## Problem, ## Method, ## Key Contributions, ## Technical Details, ## Search Tags, ## Good Match Queries.";
-
+/// Generate the brief (round 1). Kept as `build_description` for caller
+/// compatibility; the implementation now lives in `summary::generate_brief`,
+/// which writes `brief_summary.md` + `.description_ready` (flag name kept so
+/// the manifest contract is unchanged). `log_cb` / `context_override` are
+/// retained for signature stability but unused by the new pipeline.
 pub async fn build_description(
     cfg: &crate::net::HttpConfig,
     paper_dir: &Path,
     arxiv_id: &str,
     title: &str,
-    log_cb: Option<&(dyn Fn(&str) + Sync)>,
-    context_override: Option<&str>,
+    _log_cb: Option<&(dyn Fn(&str) + Sync)>,
+    _context_override: Option<&str>,
 ) -> Result<()> {
-    let api_key = config::load_cached_token()
-        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
-
-    let desc_path = paper_dir.join("description.md");
-    let flag_path = paper_dir.join(".description_ready");
-
-    let context = if let Some(override_text) = context_override {
-        override_text.to_string()
-    } else {
-        let body_path = paper_dir.join("body.tex");
-        let appendix_path = paper_dir.join("appendix.tex");
-        let mut ctx = String::new();
-        if body_path.exists() {
-            let body = std::fs::read_to_string(&body_path)?;
-            ctx.push_str(&truncate_desc(&body));
-        }
-        if appendix_path.exists() {
-            let appendix = std::fs::read_to_string(&appendix_path)?;
-            ctx.push_str("\n\n[Appendix]\n");
-            ctx.push_str(&truncate_desc(&appendix));
-        }
-        ctx
-    };
-
-    /// Cap per-file context at ~120k chars (~30k tokens), same policy as chat.
-    const MAX_DESC_CHARS: usize = 120_000;
-
-    fn truncate_desc(s: &str) -> String {
-        if s.chars().count() > MAX_DESC_CHARS {
-            let head: String = s.chars().take(MAX_DESC_CHARS).collect();
-            format!("{head}\n\n...[truncated by arxivcat]")
-        } else {
-            s.to_string()
-        }
-    }
-
-    if context.trim().is_empty() {
-        return Err(ArxivError::Extraction("paper text is empty".into()));
-    }
-
-    let user_msg =
-        format!("arXiv ID: {arxiv_id}\nTitle: {title}\n\nPaper text snippet:\n{context}");
-
-    // Reuse the configured model preference (Flash/Pro) instead of a
-    // hardcoded model (P0.14): user's chat_model choice applies to describe.
-    let model = crate::config::load_model_preference();
-    let model_id = crate::chat::deepseek::model_id(&model).unwrap_or("deepseek-v4-flash");
-    let body = serde_json::json!({
-        "model": model_id,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg}
-        ],
-        "max_tokens": 1400,
-        "stream": false,
-    });
-
-    let response = cfg
-        .client
-        .post(cfg.deepseek_chat_url())
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
+    super::summary::generate_brief(cfg, paper_dir, arxiv_id, title)
         .await
-        .map_err(|e| ArxivError::Chat(format!("description API request failed: {e}")))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(ArxivError::Chat(format!(
-            "description API error {status}: {text}"
-        )));
-    }
-
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| ArxivError::Chat(format!("failed to parse description response: {e}")))?;
-
-    let description = json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-
-    if description.is_empty() {
-        return Err(ArxivError::Chat("empty description response".into()));
-    }
-
-    let _ = std::fs::remove_file(&flag_path);
-    std::fs::write(&desc_path, &description)?;
-    std::fs::write(&flag_path, "ok\n")?;
-
-    if let Some(cb) = log_cb {
-        cb(&format!(
-            "description generated for {arxiv_id} ({})",
-            desc_path.display()
-        ));
-    }
-
-    Ok(())
+        .map(|_| ())
 }

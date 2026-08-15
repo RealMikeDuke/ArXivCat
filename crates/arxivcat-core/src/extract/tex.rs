@@ -332,6 +332,38 @@ pub fn extract_body_from_dir(paper_dir: &Path, output_dir: &Path) -> Result<Extr
     })
 }
 
+
+/// Extract raw `tabular` environments from body.tex/appendix.tex, verbatim
+/// (deterministic copy — tables never pass through the LLM).
+pub fn extract_tabular(paper_dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for fname in ["body.tex", "appendix.tex"] {
+        let p = paper_dir.join(fname);
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            collect_tabular(&text, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_tabular(text: &str, out: &mut Vec<String>) {
+    let begin = "\\begin{tabular}";
+    let end = "\\end{tabular}";
+    let mut search_from = 0;
+    while let Some(bs) = text[search_from..].find(begin) {
+        let start = search_from + bs;
+        let after = start + begin.len();
+        match text[after..].find(end) {
+            Some(es) => {
+                let stop = after + es + end.len();
+                out.push(text[start..stop].to_string());
+                search_from = stop;
+            }
+            None => break,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +496,25 @@ Body text.
         let (body, appendix) = extract_body_and_appendix(content).unwrap();
         assert!(body.contains("Abstract text."));
         assert!(appendix.is_none());
+    }
+
+
+    #[test]
+    fn extracts_tabular_verbatim() {
+        let text = "before\\begin{tabular}{lc}a & b\\\\\\end{tabular}after\\begin{tabular}{ccc}x\\\\\\end{tabular}";
+        let mut out = Vec::new();
+        collect_tabular(text, &mut out);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("a & b"));
+        assert!(out[1].contains("{ccc}"));
+        assert!(out[0].starts_with("\\begin{tabular}"));
+        assert!(out[0].ends_with("\\end{tabular}"));
+    }
+
+    #[test]
+    fn no_tabular_returns_empty() {
+        let mut out = Vec::new();
+        collect_tabular("just text", &mut out);
+        assert!(out.is_empty());
     }
 }
