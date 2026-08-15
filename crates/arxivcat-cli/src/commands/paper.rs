@@ -867,8 +867,15 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
 
     match cmd.spawn() {
         Ok(child) => {
-            // Lock now records the WORKER's PID so liveness checks work.
-            let _ = std::fs::write(&lock_path, format!("{}\n", child.id()));
+            // Lock now records the WORKER's PID so liveness checks work —
+            // only if this spawner still owns it (a concurrent acquirer may
+            // have taken over during the window).
+            let owned = std::fs::read_to_string(&lock_path)
+                .map(|c| c.trim() == std::process::id().to_string())
+                .unwrap_or(false);
+            if owned {
+                let _ = std::fs::write(&lock_path, format!("{}\n", child.id()));
+            }
         }
         Err(e) => {
             let _ = std::fs::remove_file(&lock_path);
@@ -907,8 +914,11 @@ fn deep_lock_held(lock_path: &std::path::Path) -> bool {
         return false;
     };
     let Ok(pid) = content.trim().parse::<i32>() else {
-        let _ = std::fs::remove_file(lock_path);
-        return false;
+        // Empty/garbage content = the create-then-write init window. NEVER
+        // delete here — reclaiming it lets a concurrent acquirer steal the
+        // lock and double-charge (jury-burst R4). Treat as held; the writer
+        // finishes (or the lock disappears) within microseconds.
+        return true;
     };
     if pid > 0 && process_alive(pid) {
         true
@@ -930,7 +940,14 @@ fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
         match opts.open(lp) {
             Ok(mut f) => {
                 let _ = writeln!(f, "{}", std::process::id());
-                true
+                // Read-back ownership check: if the content is not our PID
+                // the lock was stolen/deleted during the init window — we do
+                // NOT own it (jury-burst R4).
+                let mut owned = false;
+                if let Ok(content) = std::fs::read_to_string(lp) {
+                    owned = content.trim() == std::process::id().to_string();
+                }
+                owned
             }
             Err(_) => false,
         }
@@ -969,7 +986,14 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     // disable automatic deep recaps for this paper (jury-review R1 #1).
     let die = |code: i32, msg: &str| -> ! {
         eprintln!("deep-worker: {msg}");
-        let _ = std::fs::remove_file(&lock_path);
+        // Only remove the lock if WE own it (content == our PID); a
+        // concurrent acquirer may hold it now.
+        let owned = std::fs::read_to_string(&lock_path)
+            .map(|c| c.trim() == std::process::id().to_string())
+            .unwrap_or(false);
+        if owned {
+            let _ = std::fs::remove_file(&lock_path);
+        }
         std::process::exit(code);
     };
     let m = match PaperManifest::load(dir) {
@@ -990,7 +1014,12 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     }
 
     let _ = arxivcat_core::manifest::refresh_manifest(dir, &m.arxiv_id, &m.title);
-    let _ = std::fs::remove_file(&lock_path);
+    let owned = std::fs::read_to_string(&lock_path)
+        .map(|c| c.trim() == std::process::id().to_string())
+        .unwrap_or(false);
+    if owned {
+        let _ = std::fs::remove_file(&lock_path);
+    }
     if cli.json {
         println!(
             "{}",
