@@ -309,7 +309,7 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |
-| `paper deep-summarize` | `{arxiv_id, deep_ready}` |
+| `paper deep-summarize` | `{arxiv_id, deep_ready}`；busy 时 `{arxiv_id, status:"busy", message}` + exit 7 |
 | `paper remove` | `{removed, folder}` |
 | `paper redownload` | `{redownloaded, folder}` |
 | `token status` | Token configured, masked, valid, response time |
