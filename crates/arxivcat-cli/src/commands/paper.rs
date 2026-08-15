@@ -923,7 +923,15 @@ fn deep_lock_held(lock_path: &std::path::Path) -> bool {
     if pid > 0 && process_alive(pid) {
         true
     } else {
-        let _ = std::fs::remove_file(lock_path);
+        // Re-read and compare before removing: the lock may have been
+        // replaced by a concurrent acquirer between our read and here
+        // (jury-burst R5 — narrows reclaim to two adjacent syscalls).
+        let still_ours = std::fs::read_to_string(lock_path)
+            .map(|c| c.trim() == content.trim())
+            .unwrap_or(false);
+        if still_ours {
+            let _ = std::fs::remove_file(lock_path);
+        }
         false
     }
 }
@@ -946,6 +954,14 @@ fn acquire_deep_lock(lock_path: &std::path::Path) -> bool {
                 let mut owned = false;
                 if let Ok(content) = std::fs::read_to_string(lp) {
                     owned = content.trim() == std::process::id().to_string();
+                }
+                // The O_EXCL creator is the ONLY party that can safely
+                // remove its own empty/half-written lock: concurrent
+                // acquirers treat empty content as "held" and never delete
+                // (jury-burst R5 — otherwise a crash/ENOSPC between create
+                // and write leaves a permanent ghost lock).
+                if !owned {
+                    let _ = std::fs::remove_file(lp);
                 }
                 owned
             }
