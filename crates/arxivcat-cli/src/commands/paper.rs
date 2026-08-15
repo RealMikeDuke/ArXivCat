@@ -72,6 +72,18 @@ pub async fn cmd_list(cli: &Cli) {
 /// Best-effort automatic brief generation (round 1): missing key or any
 /// generation failure is logged to stderr and ignored — the download result
 /// and exit code never depend on it.
+/// `true` when a complete brief exists: the ready marker AND a non-empty
+/// `brief_summary.md` (marker alone can be stale if the file was deleted;
+/// jury-burst R12).
+fn brief_complete(paper_dir: &std::path::Path) -> bool {
+    if !paper_dir.join(".description_ready").exists() {
+        return false;
+    }
+    std::fs::read_to_string(paper_dir.join("brief_summary.md"))
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BriefStatus {
     /// A complete brief is present (already existed or we generated it).
@@ -96,14 +108,14 @@ async fn auto_brief(
 ) -> BriefStatus {
     // Idempotence gate + flock: a brief already exists (or another process
     // is generating it) — never pay for round 1 twice (jury-burst R7).
-    if paper_dir.join(".description_ready").exists() {
+    if brief_complete(paper_dir) {
         return BriefStatus::Ready;
     }
     let Some(_guard) = DeepLock::acquire_brief(paper_dir) else {
         return BriefStatus::Locked; // someone else is generating it now
     };
     // Re-check under the lock.
-    if paper_dir.join(".description_ready").exists() {
+    if brief_complete(paper_dir) {
         return BriefStatus::Ready;
     }
     if let Err(e) = arxivcat_core::chat::description::build_description(
@@ -220,7 +232,7 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
     // means deep must be skipped too — generate_deep would rebuild it
     // internally with NO lock (jury-burst R10).
     let brief_ok = if no_describe {
-        output_dir.join(".description_ready").exists()
+        brief_complete(&output_dir)
     } else {
         auto_brief(&http, &output_dir, &arxiv_id, &title).await == BriefStatus::Ready
     };
@@ -348,7 +360,7 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
                     spawn_deep_worker(dir);
                     emit("deep_spawned");
                 }
-            } else if !no_deep && dir.join(".description_ready").exists() {
+            } else if !no_deep && brief_complete(dir) {
                 // --no-describe: never generate a brief, so deep is only
                 // possible when one already exists (same semantics as the
                 // single-download path; jury-burst R11).
