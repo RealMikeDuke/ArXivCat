@@ -275,4 +275,33 @@ mod tests {
         let res = PaperManifest::load(dir.path());
         assert!(res.is_err());
     }
+
+    #[test]
+    fn lazy_migrates_description_to_brief_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("description.md"), "old brief").unwrap();
+        std::fs::write(dir.path().join(".description_ready"), "ok\n").unwrap();
+        lazy_migrate_brief(dir.path());
+        assert!(!dir.path().join("description.md").exists());
+        assert!(dir.path().join("brief_summary.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("brief_summary.md")).unwrap(),
+            "old brief"
+        );
+    }
+
+    #[test]
+    fn scan_manifest_sees_deep_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("body.tex"), "x").unwrap();
+        std::fs::write(dir.path().join("brief_summary.md"), "b").unwrap();
+        std::fs::write(dir.path().join(".description_ready"), "ok\n").unwrap();
+        std::fs::write(dir.path().join("deep_summary.md"), "d").unwrap();
+        std::fs::write(dir.path().join(".deep_ready"), "ok\n").unwrap();
+        let m = scan_manifest(dir.path(), "2501.99999", "T").unwrap();
+        assert!(m.description_ready);
+        assert!(m.deep_ready);
+        assert_eq!(m.files.brief_summary.as_deref(), Some("brief_summary.md"));
+        assert_eq!(m.files.deep_summary.as_deref(), Some("deep_summary.md"));
+    }
 }

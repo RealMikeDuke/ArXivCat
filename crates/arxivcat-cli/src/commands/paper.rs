@@ -403,9 +403,12 @@ fn resolve_view_file(view: &str) -> Result<&'static str, String> {
         "body" => Ok("body.tex"),
         "appendix" => Ok("appendix.tex"),
         "note" => Ok("note.txt"),
-        "description" => Ok("description.md"),
+        // `description` is kept as an alias for brief_summary.md (contract
+        // compatibility); `brief` is the canonical name.
+        "description" | "brief" => Ok("brief_summary.md"),
+        "deep" => Ok("deep_summary.md"),
         _ => Err(format!(
-            "unknown view '{}'. options: body, appendix, note, description",
+            "unknown view '{}'. options: body, appendix, note, description|brief, deep",
             view
         )),
     }

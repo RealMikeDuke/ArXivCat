@@ -93,14 +93,15 @@ The bracket column also shows `desc`/`-` for description.md presence (informatio
 [{"arxiv_id":"2501.12948","title":"DeepSeek-R1...","has_body":true,"description_ready":true,"is_complete":true,...}]
 ```
 
-#### `download <ID_OR_URL> [--no-describe]`
+#### `download <ID_OR_URL> [--no-describe] [--no-deep]`
 
-After extraction, a description is generated automatically (DeepSeek) unless
-`--no-describe` is given. Generation is best-effort: missing API key or any
-failure is warned on stderr and never affects the download result/exit code.
+After extraction, the brief summary (`brief_summary.md`, round 1) and the
+deep recap (`deep_summary.md`, round 2) are generated automatically
+(DeepSeek) unless `--no-describe` / `--no-deep` is given. Generation is
+best-effort: missing API key or any failure is warned on stderr and never
+affects the download result/exit code. Single downloads wait for both.
 
-
-Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → extract body.tex / appendix.tex → download PDF. AI description is NOT part of the download pipeline — use `paper describe` explicitly.
+Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → extract body.tex / appendix.tex → download PDF → brief → deep recap.
 
 **ID input**: Accepts raw IDs (`2501.12948`), versioned IDs (`2501.12948v2`), and URLs (`https://arxiv.org/abs/2501.12948`, `arxiv.org/pdf/2501.12948.pdf`, `www.arxiv.org/abs/2501.12948v3`).
 
@@ -109,11 +110,13 @@ Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → 
 {"arxiv_id":"2501.12948","folder":"...","body_length":41953,"appendix_length":159056,"description_ready":true}
 ```
 
-#### `download-all [--jobs N] [--force] [--no-describe]`
+#### `download-all [--jobs N] [--force] [--no-describe] [--no-deep]`
 
-Descriptions are generated automatically for each successful download
-(serialized, so parallel workers never hammer the API), unless
-`--no-describe` is given. Same best-effort semantics as `download`.
+Briefs are generated serially in-process for each successful download.
+Deep recaps default ON: each successful download spawns a DETACHED worker
+(`arxivcat internal deep-worker <paper_dir>`, own process group, stdio →
+`<paper>/.deep.log`) that finishes asynchronously — the batch never waits
+for it. `--no-deep` disables. Same best-effort semantics as `download`.
 
 
 Process every pending paper (missing body.tex) concurrently (`--jobs`, default 4, range 1-8). Papers in the 24h retry cooldown are skipped and reported; `--force` bypasses the cooldown. Ctrl-C stops the batch and exits 130.
@@ -135,7 +138,8 @@ Print the content of a paper file. Accepts raw ID, partial ID, or full URL.
 | `body` (default) | `body.tex` |
 | `appendix` | `appendix.tex` |
 | `note` | `note.txt` |
-| `description` | `description.md` |
+| `description` \| `brief` | `brief_summary.md` |
+| `deep` | `deep_summary.md` |
 
 **JSON output**:
 ```json
@@ -305,6 +309,7 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |
+| `paper deep-summarize` | `{arxiv_id, deep_ready}` |
 | `paper remove` | `{removed, folder}` |
 | `paper redownload` | `{redownloaded, folder}` |
 | `token status` | Token configured, masked, valid, response time |
