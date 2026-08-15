@@ -72,31 +72,39 @@ pub async fn cmd_list(cli: &Cli) {
 /// Best-effort automatic brief generation (round 1): missing key or any
 /// generation failure is logged to stderr and ignored — the download result
 /// and exit code never depend on it.
-/// Best-effort automatic brief (round 1). Returns `true` if a complete
-/// brief is present afterwards (already existed, or we generated it), and
-/// `false` if the brief is NOT ready — either another process holds
-/// `.brief.lock` (generation in flight) or generation failed.
-///
-/// Callers must not proceed into `generate_deep` on `false`: generate_deep
-/// would rebuild the brief INTERNALLY with no lock and pay round 1 again
-/// (jury-burst R9).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BriefStatus {
+    /// A complete brief is present (already existed or we generated it).
+    Ready,
+    /// Another process holds `.brief.lock` — generation is in flight.
+    Locked,
+    /// We held the lock but generation failed (transient API error etc).
+    Failed,
+}
+
+/// Best-effort automatic brief (round 1). Distinguishes "brief is ready",
+/// "brief is being generated elsewhere", and "generation failed" so callers
+/// can retry on failure (spawn the worker anyway) while never double-paying
+/// (jury-burst R9/R10). Callers must NOT proceed into `generate_deep` on
+/// `Locked`/`Failed` — generate_deep would rebuild the brief INTERNALLY
+/// with no lock and pay round 1 again.
 async fn auto_brief(
     http: &arxivcat_core::net::HttpConfig,
     paper_dir: &std::path::Path,
     arxiv_id: &str,
     title: &str,
-) -> bool {
+) -> BriefStatus {
     // Idempotence gate + flock: a brief already exists (or another process
     // is generating it) — never pay for round 1 twice (jury-burst R7).
     if paper_dir.join(".description_ready").exists() {
-        return true;
+        return BriefStatus::Ready;
     }
     let Some(_guard) = DeepLock::acquire_brief(paper_dir) else {
-        return false; // someone else is generating the brief right now
+        return BriefStatus::Locked; // someone else is generating it now
     };
     // Re-check under the lock.
     if paper_dir.join(".description_ready").exists() {
-        return true;
+        return BriefStatus::Ready;
     }
     if let Err(e) = arxivcat_core::chat::description::build_description(
         http, paper_dir, arxiv_id, title, None, None,
@@ -104,9 +112,9 @@ async fn auto_brief(
     .await
     {
         eprintln!("warning: brief generation failed for {arxiv_id}: {e}");
-        return false;
+        return BriefStatus::Failed;
     }
-    true
+    BriefStatus::Ready
 }
 
 /// Best-effort automatic deep recap (round 2): same best-effort contract as
@@ -206,12 +214,15 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
             .unwrap_or_default();
     let _ = arxivcat_core::manifest::refresh_manifest(&output_dir, &arxiv_id, &title);
 
-    // Default-on automatic brief (disable with --no-describe). Returns
-    // whether a complete brief is present afterwards.
+    // Default-on automatic brief (disable with --no-describe). With
+    // --no-describe we do NOT generate a brief; deep is still possible if
+    // a brief already exists (e.g. generated earlier), but a missing brief
+    // means deep must be skipped too — generate_deep would rebuild it
+    // internally with NO lock (jury-burst R10).
     let brief_ok = if no_describe {
-        true
+        output_dir.join(".description_ready").exists()
     } else {
-        auto_brief(&http, &output_dir, &arxiv_id, &title).await
+        auto_brief(&http, &output_dir, &arxiv_id, &title).await == BriefStatus::Ready
     };
 
     // Default-on automatic deep recap (disable with --no-deep). Runs after
@@ -326,12 +337,14 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
     match result {
         Ok(true) => {
             if !no_describe {
-                let brief_ok = auto_brief(&http, dir, &arxiv_id, &title).await;
+                let brief = auto_brief(&http, dir, &arxiv_id, &title).await;
                 emit("brief_done");
-                // Only spawn the deep worker when the brief is actually
-                // ready — otherwise the worker would exit 0 on its own
-                // brief gate and the deep would be lost (jury-burst R9).
-                if brief_ok && !no_deep {
+                // Spawn the deep worker when the brief is READY (normal) or
+                // generation FAILED (the worker retries under its own
+                // .brief.lock — single payment, no loss). Skip only when
+                // another process holds the lock: it finishes the deep
+                // itself (jury-burst R9/R10).
+                if !no_deep && brief != BriefStatus::Locked {
                     spawn_deep_worker(dir);
                     emit("deep_spawned");
                 }
@@ -1047,10 +1060,9 @@ pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
 
     // Ensure the brief exists BEFORE deep — generate_deep would otherwise
     // rebuild it internally with NO lock, paying round 1 concurrently
-    // (jury-burst R8/R9). If the brief is not ready (someone else is
-    // generating it, or generation failed), skip this paper: the concurrent
-    // generator finishes its own deep, or a later run retries.
-    if !auto_brief(&http, dir, &m.arxiv_id, &m.title).await {
+    // (jury-burst R8/R9). If the brief is not ready, skip this paper: the
+    // concurrent generator finishes its own deep, or a later run retries.
+    if auto_brief(&http, dir, &m.arxiv_id, &m.title).await != BriefStatus::Ready {
         return;
     }
     if let Err(e) =
@@ -1101,10 +1113,6 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
         }
         std::process::exit(crate::commands::EXIT_CHAT);
     };
-    if force {
-        let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
-        let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
-    }
 
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
@@ -1112,23 +1120,51 @@ pub async fn cmd_deep_summarize(cli: &Cli, id_or_query: &str, force: bool) {
     };
     // Ensure the brief exists BEFORE deep (same rationale as deep-worker;
     // jury-burst R8/R9 — generate_deep's internal rebuild is unlocked).
-    if !auto_brief(&http, &paper.folder, &paper.arxiv_id, &paper.title).await {
-        if cli.json {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "arxiv_id": paper.arxiv_id,
-                    "status": "brief_unavailable",
-                    "message": "brief is missing and another process is generating it (or generation failed); retry later",
-                })
-            );
-        } else {
-            eprintln!(
-                "brief for {} is not ready (another process is generating it, or generation failed); retry later",
-                paper.arxiv_id
-            );
+    match auto_brief(&http, &paper.folder, &paper.arxiv_id, &paper.title).await {
+        BriefStatus::Ready => {}
+        BriefStatus::Locked => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "status": "brief_locked",
+                        "message": "brief is being generated by another process; retry later",
+                    })
+                );
+            } else {
+                eprintln!(
+                    "brief for {} is being generated by another process; retry later",
+                    paper.arxiv_id
+                );
+            }
+            std::process::exit(crate::commands::EXIT_CHAT);
         }
-        std::process::exit(crate::commands::EXIT_CHAT);
+        BriefStatus::Failed => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "arxiv_id": paper.arxiv_id,
+                        "status": "brief_failed",
+                        "message": "brief generation failed; retry later",
+                    })
+                );
+            } else {
+                eprintln!(
+                    "brief generation failed for {}; retry later",
+                    paper.arxiv_id
+                );
+            }
+            std::process::exit(crate::commands::EXIT_CHAT);
+        }
+    }
+    // Brief gate passed — now safe to clear --force marks (cleaning before
+    // the gate would destroy the current summary when we are refused;
+    // jury-burst R7/R10).
+    if force {
+        let _ = std::fs::remove_file(paper.folder.join(".deep_ready"));
+        let _ = std::fs::remove_file(paper.folder.join("deep_summary.md"));
     }
     match arxivcat_core::chat::summary::generate_deep(
         &http,
