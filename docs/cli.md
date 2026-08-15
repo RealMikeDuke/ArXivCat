@@ -107,7 +107,7 @@ Full pipeline: parse arXiv ID from raw ID or URL → download source tar.gz → 
 
 **JSON output**:
 ```json
-{"arxiv_id":"2501.12948","folder":"...","body_length":41953,"appendix_length":159056,"description_ready":true}
+{"arxiv_id":"2501.12948","folder":"...","body_length":41953,"appendix_length":159056,"description_ready":true,"deep_ready":true}
 ```
 
 #### `download-all [--jobs N] [--force] [--no-describe] [--no-deep]`

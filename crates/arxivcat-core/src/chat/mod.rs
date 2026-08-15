@@ -39,6 +39,16 @@ fn truncate_context(content: &str) -> String {
     }
 }
 
+/// Brief summary content: `brief_summary.md` is canonical (since the
+/// brief/deep pipeline), falling back to the legacy `description.md`.
+fn read_brief(paper_dir: &std::path::Path) -> std::io::Result<String> {
+    let brief = paper_dir.join("brief_summary.md");
+    if brief.exists() {
+        return std::fs::read_to_string(&brief);
+    }
+    std::fs::read_to_string(paper_dir.join("description.md"))
+}
+
 pub fn build_side_chat_context(paper_dir: &Path, selection: &ContextSelection) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -53,7 +63,7 @@ pub fn build_side_chat_context(paper_dir: &Path, selection: &ContextSelection) -
         }
     }
     if selection.description {
-        if let Ok(content) = std::fs::read_to_string(paper_dir.join("description.md")) {
+        if let Ok(content) = read_brief(paper_dir) {
             parts.push(format!("description:\n{}", content));
         }
     }
@@ -86,8 +96,7 @@ pub fn build_global_chat_context(papers: &[Paper], selection: &ContextSelection)
             }
         }
         if selection.description {
-            let desc_path = paper.folder.join("description.md");
-            if let Ok(content) = std::fs::read_to_string(&desc_path) {
+            if let Ok(content) = read_brief(&paper.folder) {
                 sections.push(format!("description:\n{}", content));
             }
         }

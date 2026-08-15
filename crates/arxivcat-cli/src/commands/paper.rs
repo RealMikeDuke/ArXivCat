@@ -191,7 +191,9 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
 
     // Default-on automatic deep recap (disable with --no-deep). Runs after
     // the brief so round 2 hits the prefix cache; single downloads wait.
-    if !no_deep {
+    // If a detached worker already owns .deep.lock (e.g. a concurrent
+    // download-all), skip — it will finish the job (jury-review R1 #6).
+    if !no_deep && !output_dir.join(".deep.lock").exists() {
         auto_deep(&http, &output_dir, &arxiv_id, &title).await;
     }
 
@@ -289,7 +291,7 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
     .await;
 
     match result {
-        Ok(true) | Ok(false) => {
+        Ok(true) => {
             if !no_describe {
                 auto_brief(&http, dir, &arxiv_id, &title).await;
                 emit("brief_done");
@@ -299,6 +301,26 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
                 emit("deep_spawned");
             }
             emit("done");
+        }
+        Ok(false) => {
+            // Extracted nothing usable (no body.tex) — that is NOT success
+            // (jury-review R1 #4). Report failed so the batch does not
+            // count it as done; a retry can pick it up later.
+            let msg = "download completed but no body.tex was produced".to_string();
+            let _ = arxivcat_core::manifest::refresh_manifest(dir, &arxiv_id, &title);
+            let _ = arxivcat_core::manifest::mark_failure(dir, &msg);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event": "failed",
+                    "arxiv_id": arxiv_id,
+                    "code": crate::commands::EXIT_OTHER,
+                    "kind": "other",
+                    "message": msg,
+                    "retryable": true,
+                })
+            );
+            std::process::exit(crate::commands::EXIT_OTHER);
         }
         Err(e) => {
             let msg = e.to_string();
@@ -791,19 +813,26 @@ pub async fn cmd_info(cli: &Cli, id_or_query: &str) {
 /// process group (survives Ctrl-C of the parent) and writes
 /// deep_summary.md + .deep_ready. stdout/stderr go to `.deep.log`.
 fn spawn_deep_worker(paper_dir: &std::path::Path) {
-    // Already done or already queued — never double-spawn.
+    let lock_path = paper_dir.join(".deep.lock");
+
+    // Already done — never regenerate.
     if paper_dir.join(".deep_ready").exists() {
         return;
     }
-    if paper_dir.join(".deep.lock").exists() {
-        return;
+    // A live worker holds this lock (its own PID is inside). A stale lock
+    // (crashed / killed worker) is reclaimed here.
+    if let Ok(content) = std::fs::read_to_string(&lock_path) {
+        if let Ok(pid) = content.trim().parse::<i32>() {
+            if pid > 0 && process_alive(pid) {
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(&lock_path);
     }
-    let _ = std::fs::write(
-        paper_dir.join(".deep.lock"),
-        format!("{}\n", std::process::id()),
-    );
+    let _ = std::fs::write(&lock_path, "0\n"); // placeholder, backfilled below
 
     let Some(exe) = std::env::current_exe().ok() else {
+        let _ = std::fs::remove_file(&lock_path);
         eprintln!("warning: cannot locate own executable, skipping deep worker");
         return;
     };
@@ -838,11 +867,31 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
         }
     }
 
-    if let Err(e) = cmd.spawn() {
-        eprintln!(
-            "warning: failed to spawn deep worker for {}: {e}",
-            paper_dir.display()
-        );
+    match cmd.spawn() {
+        Ok(child) => {
+            // Lock now records the WORKER's PID so liveness checks work.
+            let _ = std::fs::write(&lock_path, format!("{}\n", child.id()));
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&lock_path);
+            eprintln!(
+                "warning: failed to spawn deep worker for {}: {e}",
+                paper_dir.display()
+            );
+        }
+    }
+}
+
+/// True if a process with `pid` exists (Unix: signal 0 probe).
+fn process_alive(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
     }
 }
 
@@ -854,35 +903,34 @@ fn spawn_deep_worker(paper_dir: &std::path::Path) {
 pub async fn cmd_deep_worker(cli: &Cli, paper_dir: &str) {
     use arxivcat_core::manifest::PaperManifest;
     let dir = std::path::Path::new(paper_dir);
+    let lock_path = dir.join(".deep.lock");
+    // `std::process::exit` does NOT run Drop, so every exit path removes the
+    // lock explicitly — otherwise a single API failure would permanently
+    // disable automatic deep recaps for this paper (jury-review R1 #1).
+    let die = |code: i32, msg: &str| -> ! {
+        eprintln!("deep-worker: {msg}");
+        let _ = std::fs::remove_file(&lock_path);
+        std::process::exit(code);
+    };
     let m = match PaperManifest::load(dir) {
         Ok(Some(m)) => m,
-        Ok(None) => {
-            eprintln!("deep-worker: no manifest at {paper_dir}");
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("deep-worker: {e}");
-            std::process::exit(1);
-        }
+        Ok(None) => die(1, &format!("no manifest at {paper_dir}")),
+        Err(e) => die(1, &e.to_string()),
     };
 
     let http = match arxivcat_core::net::HttpConfig::new() {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("deep-worker: {e}");
-            std::process::exit(4);
-        }
+        Err(e) => die(4, &e.to_string()),
     };
 
     if let Err(e) =
         arxivcat_core::chat::summary::generate_deep(&http, dir, &m.arxiv_id, &m.title).await
     {
-        eprintln!("deep-worker: {e}");
-        std::process::exit(7); // chat upstream
+        die(7, &e.to_string()); // chat upstream
     }
 
     let _ = arxivcat_core::manifest::refresh_manifest(dir, &m.arxiv_id, &m.title);
-    let _ = std::fs::remove_file(dir.join(".deep.lock"));
+    let _ = std::fs::remove_file(&lock_path);
     if cli.json {
         println!(
             "{}",
@@ -1038,6 +1086,8 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     for name in [
         "note.txt",
         "brief_summary.md",
+        // Legacy brief name — pre-migration folders only have description.md.
+        "description.md",
         "deep_summary.md",
         "arxiv_chats",
         ".description_ready",
@@ -1104,6 +1154,8 @@ pub async fn cmd_redownload(cli: &Cli, id_or_query: &str) {
     for name in [
         "note.txt",
         "brief_summary.md",
+        // Legacy brief name — pre-migration folders only have description.md.
+        "description.md",
         "deep_summary.md",
         "arxiv_chats",
         ".description_ready",
