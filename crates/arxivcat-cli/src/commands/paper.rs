@@ -348,7 +348,10 @@ pub async fn cmd_download_worker(_cli: &Cli, paper_dir: &str, no_describe: bool,
                     spawn_deep_worker(dir);
                     emit("deep_spawned");
                 }
-            } else if !no_deep {
+            } else if !no_deep && dir.join(".description_ready").exists() {
+                // --no-describe: never generate a brief, so deep is only
+                // possible when one already exists (same semantics as the
+                // single-download path; jury-burst R11).
                 spawn_deep_worker(dir);
                 emit("deep_spawned");
             }
