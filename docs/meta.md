@@ -16,6 +16,8 @@ ArXivCat 是一个 **arXiv 论文工作区 CLI**（Rust，双 crate）：下载 
 | 文件 | 作用 | 谁读 |
 |---|---|---|
 | **meta.md**（本文件） | 导航总入口 | 所有人 |
+| **planning/0.12-content-pdf.md** | 0.12.0 大改方案定稿（content 合并 + PDF 路径 + 身份体系）+ 悬而未决问题 + 实施 TODO | 0.12 实施者 |
+| **planning/mineru-integration.md** | MinerU API 实测 + PDF 集成设计（调研完成未实施） | PDF 路径实施者 |
 | **architecture.md** | 技术架构：进程模型/flock 锁/AI 管线/代码地图/陷阱 | 内部开发者（快速上手） |
 | **cli.md** | 用户手册：命令/JSON/退出码契约/工作流 | 使用者、Agent 集成 |
 | **maintenance-decisions.md** | 维护者决策档案（错误分类、发布顺序、flock 裁决、known-issues） | 维护者 |
