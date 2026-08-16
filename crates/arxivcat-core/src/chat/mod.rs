@@ -26,17 +26,23 @@ pub struct ContextSelection {
     pub note: bool,
 }
 
-/// Cap per-file context at ~120k chars (~30k tokens) so huge papers cannot
-/// blow the model token limit or the request size.
-const MAX_CONTEXT_CHARS: usize = 120_000;
+/// Defensive cap near the model's 1M-token context window (~2M chars ≈
+/// 500k English / ~1M Chinese tokens) so chat context only gets trimmed
+/// when it genuinely exceeds the window. Keeps BOTH ends if triggered.
+const MAX_CONTEXT_CHARS: usize = 2_000_000;
 
 fn truncate_context(content: &str) -> String {
-    if content.chars().count() > MAX_CONTEXT_CHARS {
-        let head: String = content.chars().take(MAX_CONTEXT_CHARS).collect();
-        format!("{head}\n\n...[truncated by arxivcat]")
-    } else {
-        content.to_string()
+    let len = content.chars().count();
+    if len <= MAX_CONTEXT_CHARS {
+        return content.to_string();
     }
+    let keep = MAX_CONTEXT_CHARS / 2;
+    let head: String = content.chars().take(keep).collect();
+    let tail: String = content.chars().skip(len - keep).take(keep).collect();
+    format!(
+        "{head}\n\n...[truncated by arxivcat: {} chars omitted from middle]\n\n{tail}",
+        len - MAX_CONTEXT_CHARS
+    )
 }
 
 /// Brief summary content: `brief_summary.md` is canonical (since the

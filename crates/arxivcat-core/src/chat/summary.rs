@@ -23,16 +23,25 @@ const BRIEF_INSTRUCTION: &str = "Write a structured markdown brief for this pape
 /// Round-2 instruction (a NEW user message after the brief was produced).
 const DEEP_INSTRUCTION: &str = "Now write a DEEP technical recap of the same paper, in Chinese, based on the paper text and the brief above. Structure: 1. 核心问题 (why existing methods are not enough, with concrete numbers); 2. 核心洞察 (the single key idea); 3. 方法细节 (architecture, training, datasets, hyperparameters, formula intuition); 4. 实验结果 (main numbers, ablations, baselines); 5. 局限性与未解决问题 (author-stated and reviewer-perspective columns). Be detailed enough that a PhD student in the field can discuss the paper without reading the original. Preserve numbers at their original precision. Do NOT include tables from the source — raw tables are appended separately. Output markdown only.";
 
-/// Cap per-file context at ~120k chars (~30k tokens), same policy as chat.
-const MAX_CTX_CHARS: usize = 120_000;
+/// Defensive cap near the model's 1M-token context window (~2M chars ≈
+/// 500k English / ~1M Chinese tokens) so a document only gets trimmed when
+/// it genuinely exceeds the window — normal papers and long technical
+/// reports pass through UNTRIMMED (user requirement: never truncate the
+/// content they feed in). If the cap ever triggers, keep BOTH ends.
+const MAX_CTX_CHARS: usize = 2_000_000;
 
 fn truncate(s: &str) -> String {
-    if s.chars().count() > MAX_CTX_CHARS {
-        let head: String = s.chars().take(MAX_CTX_CHARS).collect();
-        format!("{head}\n\n...[truncated by arxivcat]")
-    } else {
-        s.to_string()
+    let len = s.chars().count();
+    if len <= MAX_CTX_CHARS {
+        return s.to_string();
     }
+    let keep = MAX_CTX_CHARS / 2;
+    let head: String = s.chars().take(keep).collect();
+    let tail: String = s.chars().skip(len - keep).take(keep).collect();
+    format!(
+        "{head}\n\n...[truncated by arxivcat: {} chars omitted from middle]\n\n{tail}",
+        len - MAX_CTX_CHARS
+    )
 }
 
 /// Byte-stable round-1 user message: paper metadata + context + brief
