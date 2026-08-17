@@ -60,6 +60,6 @@ ArXivCat 是一个 **arXiv 论文工作区 CLI**（Rust，双 crate）：下载 
 - **测试**：126 全绿（cli 单元 11 + cli_contract 9 + exit_codes 9 + core 60 + http_retry 8 + integration 27 + summary_rounds 2）
 - **门禁**：fmt + clippy `-D warnings`（最新 stable）+ test + release build
 - **CI**：GitHub Actions（ubuntu-latest 单矩阵；bash -e 语义已在 smoke 处理）
-- **版本线**：0.10.0 → 0.11.0 … → 0.11.11（tagged）；v0.11.12 tag 已撤，方案 3（摘要管线+进程化+flock）在 main 未发版
+- **版本线**：0.10.0 → 0.11.0 … → **v0.11.14**（最新 tag；0.11.12=摘要管线+进程化+flock、0.11.13=raw 布局+tag、0.11.14=categories+set/clear+export/import）
 - **发布**：待用户 token + 意愿；core 先发、cli 后发（cli 依赖 core crates.io）
 - **遗留 known-issues**：Windows/macOS best-effort 未 CI；下载锁 30s 后仍 24h 冷却（--force 兜底）；非 unix 锁 fallback 需手动清理

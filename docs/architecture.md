@@ -41,6 +41,8 @@ arxivcat (workspace)
 - `description.md` 是历史遗留名，写路径惰性迁移为 `brief_summary.md`；空 stub 永不遮蔽真实 brief（`brief_complete` 要求标记 + 文件非空）。
 - `download-all` 的 pending = 无 `body.tex`；`--force` 跳过 24h cooldown。
 - 布局兼容：workspace 根下的 legacy 论文目录照常读取；tag 目录（真实目录、名字非论文 ID）与 symlink 条目不会被当成论文。
+- **分类（tag）双记录**：manifest `categories`（数据层权威，导出/scan 不丢）+ `{workspace}/{tag}/` symlink（物化视图）。`paper tag set/clear` 做完整重分类。
+- **export/import**：`workspace export` 打包所有论文为统一 `raw/{folder}` 布局（分类在 manifest 里随行）；`import` 按文件夹名去重、复制、从 manifest categories 重建 tag symlink（幂等）。Linux/macOS 原生 symlink。
 
 ## 3. 执行模型（进程架构）
 
