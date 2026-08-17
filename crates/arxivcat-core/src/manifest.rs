@@ -46,6 +46,12 @@ pub struct PaperManifest {
     /// Unix ms before which a retry is refused (0 = no cooldown).
     #[serde(default)]
     pub cooldown_until_ms: u64,
+    /// Tags/categories this paper belongs to (0.11.13+). Physical tag dirs
+    /// at the workspace root are symlinks into raw/; this field is the
+    /// authoritative data-layer record so classification survives export
+    /// and can be rebuilt after import.
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 impl PaperManifest {
@@ -152,6 +158,10 @@ pub fn scan_manifest(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<Pa
         deep_ready,
         last_error: prev.as_ref().and_then(|m| m.last_error.clone()),
         cooldown_until_ms: prev.as_ref().map(|m| m.cooldown_until_ms).unwrap_or(0),
+        categories: prev
+            .as_ref()
+            .map(|m| m.categories.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -215,6 +225,7 @@ pub fn mark_failure(paper_dir: &Path, error: &str) -> Result<()> {
                 deep_ready: false,
                 last_error: None,
                 cooldown_until_ms: 0,
+                categories: Vec::new(),
             }
         }
     };

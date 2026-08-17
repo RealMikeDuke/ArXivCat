@@ -70,6 +70,13 @@ pub enum TagCmd {
     /// Remove a paper from a tag.
     #[command(about = "Remove a paper from a tag")]
     Remove { id_or_query: String, tag: String },
+    /// Reclassify: set the FULL tag list of a paper (comma-separated).
+    /// Tags not listed are removed, new ones are added.
+    #[command(about = "Reclassify: set the full tag list (comma-separated)")]
+    Set { id_or_query: String, tags: String },
+    /// Remove ALL tags from a paper.
+    #[command(about = "Remove all tags from a paper")]
+    Clear { id_or_query: String },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -285,6 +292,12 @@ async fn main() {
                 }
                 TagCmd::Remove { id_or_query, tag } => {
                     commands::paper::cmd_tag_remove(&cli, id_or_query, tag).await
+                }
+                TagCmd::Set { id_or_query, tags } => {
+                    commands::paper::cmd_tag_set(&cli, id_or_query, &tags).await
+                }
+                TagCmd::Clear { id_or_query } => {
+                    commands::paper::cmd_tag_clear(&cli, id_or_query).await
                 }
             },
             PaperCmd::Preview { id_or_query, view } => {

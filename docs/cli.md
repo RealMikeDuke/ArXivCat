@@ -320,6 +320,11 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper tag list` | List all tags (directories of symlinks) |
 | `paper tag add <id> <tag>` | Tag a paper (creates the tag dir if new, symlinks into `raw/`) |
 | `paper tag remove <id> <tag>` | Untag a paper (removes the symlink) |
+| `paper tag set <id> <tag1,tag2>` | Reclassify: set the FULL tag list (removes unlisted tags) |
+| `paper tag clear <id>` | Remove all tags from a paper |
+
+Tags are recorded in the paper manifest (`categories`) AND materialized as
+symlinks in `{workspace}/{tag}/`; `set`/`clear` remove stale symlinks.
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |

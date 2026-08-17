@@ -82,28 +82,105 @@ fn tag_link_target(ws: &std::path::Path, paper: &Paper) -> std::path::PathBuf {
     }
 }
 
+fn ensure_manifest(paper: &Paper) -> Result<crate::manifest::PaperManifest> {
+    if let Some(m) = crate::manifest::PaperManifest::load(&paper.folder)? {
+        return Ok(m);
+    }
+    crate::manifest::refresh_manifest(&paper.folder, &paper.arxiv_id, &paper.title)?;
+    Ok(crate::manifest::PaperManifest::load(&paper.folder)?
+        .expect("manifest written by refresh_manifest"))
+}
+
+fn save_categories(paper: &Paper, categories: Vec<String>) -> Result<()> {
+    let mut m = ensure_manifest(paper)?;
+    m.categories = categories;
+    m.save(&paper.folder)
+}
+
 /// Add a paper to a tag: create the tag dir if needed and symlink
-/// `{ws}/{tag}/{folder}` -> relative target. Idempotent.
+/// `{ws}/{tag}/{folder}` -> relative target, and record the tag in the
+/// manifest `categories`. Idempotent.
 pub fn tag_paper(ws: &std::path::Path, paper: &Paper, tag: &str) -> Result<std::path::PathBuf> {
     validate_tag_name(tag)?;
     let tag_dir = ws.join(tag);
     std::fs::create_dir_all(&tag_dir)?;
     let link = tag_dir.join(&paper.folder_name);
     if std::fs::symlink_metadata(&link).is_ok() {
+        // symlink already present — ensure the manifest records it too
+        let mut m = ensure_manifest(paper)?;
+        if !m.categories.iter().any(|c| c == tag) {
+            m.categories.push(tag.to_string());
+            m.save(&paper.folder)?;
+        }
         return Ok(link); // already tagged
     }
     let target = tag_link_target(ws, paper);
     symlink_dir(&target, &link)?;
+    let mut m = ensure_manifest(paper)?;
+    if !m.categories.iter().any(|c| c == tag) {
+        m.categories.push(tag.to_string());
+        m.save(&paper.folder)?;
+    }
     Ok(link)
 }
 
-/// Remove a paper from a tag (removes the symlink). Idempotent.
+/// Remove a paper from a tag (removes the symlink and the manifest entry).
+/// Idempotent.
 pub fn untag_paper(ws: &std::path::Path, paper: &Paper, tag: &str) -> Result<()> {
     let link = ws.join(tag).join(&paper.folder_name);
     if std::fs::symlink_metadata(&link).is_ok() {
         std::fs::remove_file(&link)?;
     }
+    let mut m = ensure_manifest(paper)?;
+    let before = m.categories.len();
+    m.categories.retain(|c| c != tag);
+    if m.categories.len() != before {
+        m.save(&paper.folder)?;
+    }
     Ok(())
+}
+
+/// Set the full classification of a paper (reclassify): tags not in the new
+/// list are removed (symlink + manifest), new ones are added. This is the
+/// "重新分类 / 推翻之前分类" operation.
+pub fn set_tags(ws: &std::path::Path, paper: &Paper, tags: &[String]) -> Result<Vec<String>> {
+    for t in tags {
+        validate_tag_name(t)?;
+    }
+    let current = ensure_manifest(paper)?.categories;
+    // remove symlinks for tags no longer present
+    for old in &current {
+        if !tags.iter().any(|t| t == old) {
+            let link = ws.join(old).join(&paper.folder_name);
+            if std::fs::symlink_metadata(&link).is_ok() {
+                let _ = std::fs::remove_file(&link);
+            }
+        }
+    }
+    // add symlinks for new tags
+    for t in tags {
+        let tag_dir = ws.join(t);
+        std::fs::create_dir_all(&tag_dir)?;
+        let link = tag_dir.join(&paper.folder_name);
+        if std::fs::symlink_metadata(&link).is_err() {
+            let target = tag_link_target(ws, paper);
+            symlink_dir(&target, &link)?;
+        }
+    }
+    save_categories(paper, tags.to_vec())?;
+    Ok(tags.to_vec())
+}
+
+/// Remove ALL tags from a paper (symlinks + manifest entries).
+pub fn clear_tags(ws: &std::path::Path, paper: &Paper) -> Result<()> {
+    let current = ensure_manifest(paper)?.categories;
+    for old in &current {
+        let link = ws.join(old).join(&paper.folder_name);
+        if std::fs::symlink_metadata(&link).is_ok() {
+            let _ = std::fs::remove_file(&link);
+        }
+    }
+    save_categories(paper, Vec::new())
 }
 
 #[cfg(unix)]
@@ -663,5 +740,50 @@ mod tag_tests {
         assert!(validate_tag_name("arxivcat_global_chats").is_err());
         assert!(validate_tag_name(".hidden").is_err());
         assert!(validate_tag_name("").is_err());
+    }
+
+    #[test]
+    fn tags_sync_manifest_categories() {
+        let dir = ws();
+        let p = paper(&dir, "2501_11111");
+        tag_paper(&dir, &p, "3d-vision").unwrap();
+        tag_paper(&dir, &p, "llm").unwrap();
+        let m = crate::manifest::PaperManifest::load(&p.folder)
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.categories, vec!["3d-vision", "llm"]);
+        untag_paper(&dir, &p, "llm").unwrap();
+        let m = crate::manifest::PaperManifest::load(&p.folder)
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.categories, vec!["3d-vision"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_tags_reclassifies_and_removes_old_symlinks() {
+        let dir = ws();
+        let p = paper(&dir, "2501_11111");
+        tag_paper(&dir, &p, "3d-vision").unwrap();
+        tag_paper(&dir, &p, "llm").unwrap();
+        set_tags(&dir, &p, &["robotics".to_string(), "nlp".to_string()]).unwrap();
+        let m = crate::manifest::PaperManifest::load(&p.folder)
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.categories, vec!["robotics", "nlp"]);
+        // old symlinks gone
+        assert!(std::fs::symlink_metadata(dir.join("3d-vision/2501_11111")).is_err());
+        assert!(std::fs::symlink_metadata(dir.join("llm/2501_11111")).is_err());
+        // new symlinks present
+        assert!(std::fs::symlink_metadata(dir.join("robotics/2501_11111")).is_ok());
+        assert!(std::fs::symlink_metadata(dir.join("nlp/2501_11111")).is_ok());
+        // clear
+        clear_tags(&dir, &p).unwrap();
+        let m = crate::manifest::PaperManifest::load(&p.folder)
+            .unwrap()
+            .unwrap();
+        assert!(m.categories.is_empty());
+        assert!(std::fs::symlink_metadata(dir.join("robotics/2501_11111")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

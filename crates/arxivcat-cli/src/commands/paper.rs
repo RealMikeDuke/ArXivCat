@@ -202,6 +202,54 @@ pub async fn cmd_tag_remove(cli: &Cli, id_or_query: &str, tag: &str) {
     }
 }
 
+pub async fn cmd_tag_set(cli: &Cli, id_or_query: &str, tags_csv: &str) {
+    let ws_path = get_ws(cli);
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+    let tags: Vec<String> = tags_csv
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    match arxivcat_core::workspace::set_tags(&ws_path, &paper, &tags) {
+        Ok(final_tags) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"arxiv_id": paper.arxiv_id, "tags": final_tags})
+                );
+            } else {
+                println!(
+                    "{} {} -> {:?}",
+                    ok("classified"),
+                    paper.arxiv_id,
+                    final_tags
+                );
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
+pub async fn cmd_tag_clear(cli: &Cli, id_or_query: &str) {
+    let ws_path = get_ws(cli);
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+    match arxivcat_core::workspace::clear_tags(&ws_path, &paper) {
+        Ok(()) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"arxiv_id": paper.arxiv_id, "tags": []})
+                );
+            } else {
+                println!("{} {} (all tags removed)", gray("cleared"), paper.arxiv_id);
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
 pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep: bool) {
     let ws_path = get_ws(cli);
     let _ws = open_ws(cli);
