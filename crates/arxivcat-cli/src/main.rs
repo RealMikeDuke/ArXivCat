@@ -294,7 +294,7 @@ async fn main() {
                     commands::paper::cmd_tag_remove(&cli, id_or_query, tag).await
                 }
                 TagCmd::Set { id_or_query, tags } => {
-                    commands::paper::cmd_tag_set(&cli, id_or_query, &tags).await
+                    commands::paper::cmd_tag_set(&cli, id_or_query, tags).await
                 }
                 TagCmd::Clear { id_or_query } => {
                     commands::paper::cmd_tag_clear(&cli, id_or_query).await
