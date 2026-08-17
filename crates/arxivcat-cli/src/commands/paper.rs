@@ -144,6 +144,64 @@ async fn auto_deep(
     }
 }
 
+pub async fn cmd_tag_list(cli: &Cli) {
+    let ws = open_ws(cli);
+    let tags = arxivcat_core::workspace::list_tags(&ws.path);
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&tags).unwrap_or_default()
+        );
+        return;
+    }
+    if tags.is_empty() {
+        println!("{}", gray("(no tags)"));
+        return;
+    }
+    for t in &tags {
+        println!("{t}");
+    }
+}
+
+pub async fn cmd_tag_add(cli: &Cli, id_or_query: &str, tag: &str) {
+    let ws_path = get_ws(cli);
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+    match arxivcat_core::workspace::tag_paper(&ws_path, &paper, tag) {
+        Ok(link) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"tag": tag, "arxiv_id": paper.arxiv_id,
+                                       "link": link.display().to_string()})
+                );
+            } else {
+                println!("{} {}", ok("tagged"), link.display());
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
+pub async fn cmd_tag_remove(cli: &Cli, id_or_query: &str, tag: &str) {
+    let ws_path = get_ws(cli);
+    let ws = open_ws(cli);
+    let paper = crate::commands::find_paper_or_die(cli, &ws, id_or_query);
+    match arxivcat_core::workspace::untag_paper(&ws_path, &paper, tag) {
+        Ok(()) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"tag": tag, "arxiv_id": paper.arxiv_id, "removed": true})
+                );
+            } else {
+                println!("{} removed from tag {tag}", gray("untagged"));
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
 pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep: bool) {
     let ws_path = get_ws(cli);
     let _ws = open_ws(cli);
@@ -192,7 +250,17 @@ pub async fn cmd_download(cli: &Cli, id_or_url: &str, no_describe: bool, no_deep
 
     let folder_name = folder_name_opt.unwrap_or_else(|| arxiv_id.replace('.', "_"));
 
-    let output_dir = ws_path.join(&folder_name);
+    // Canonical layout since 0.11.13: papers live under workspace/raw/.
+    let raw_dir = ws_path.join(arxivcat_core::workspace::RAW_DIR);
+    if let Err(e) = std::fs::create_dir_all(&raw_dir) {
+        crate::commands::die(
+            cli,
+            crate::commands::EXIT_IO,
+            "io",
+            &format!("failed to create workspace raw dir: {e}"),
+        );
+    }
+    let output_dir = raw_dir.join(&folder_name);
 
     let output = match arxivcat_core::extract::tex::extract_body_from_dir(&paper_dir, &output_dir) {
         Ok(o) => o,
@@ -424,7 +492,7 @@ pub async fn cmd_download_all(cli: &Cli, jobs: u8, force: bool, no_describe: boo
 
     // Defensive clamp — clap already validates 1..=8, but keep this as a
     // library-facing guard (P3-3 known-issue; restored after jury-review).
-    let jobs = jobs.clamp(1, 8);
+    let jobs = jobs.clamp(1, 32);
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

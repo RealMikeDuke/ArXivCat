@@ -93,6 +93,12 @@ The bracket column also shows `desc`/`-` for description.md presence (informatio
 [{"arxiv_id":"2501.12948","title":"DeepSeek-R1...","has_body":true,"description_ready":true,"is_complete":true,...}]
 ```
 
+**Workspace layout** (since 0.11.13): papers live under `{workspace}/raw/`
+(the canonical download target); legacy papers at the workspace root are
+still read. Tag directories (see `paper tag`) are directories at the
+workspace root holding symlinks into `raw/` — they are never mistaken for
+papers.
+
 #### `download <ID_OR_URL> [--no-describe] [--no-deep]`
 
 After extraction, the brief summary (`brief_summary.md`, round 1) and the
@@ -311,6 +317,9 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 | `paper list` | Array of paper objects |
 | `paper download` | Download result with file sizes |
 | `paper download-all` | Batch status + counts |
+| `paper tag list` | List all tags (directories of symlinks) |
+| `paper tag add <id> <tag>` | Tag a paper (creates the tag dir if new, symlinks into `raw/`) |
+| `paper tag remove <id> <tag>` | Untag a paper (removes the symlink) |
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |

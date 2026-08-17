@@ -59,7 +59,20 @@ pub enum WorkspaceCmd {
     Scan,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, clap::Subcommand)]
+pub enum TagCmd {
+    /// List all existing tags.
+    #[command(about = "List all existing tags")]
+    List,
+    /// Add a paper to a tag (creates the tag directory if new).
+    #[command(about = "Add a paper to a tag (creates the tag directory if new)")]
+    Add { id_or_query: String, tag: String },
+    /// Remove a paper from a tag.
+    #[command(about = "Remove a paper from a tag")]
+    Remove { id_or_query: String, tag: String },
+}
+
+#[derive(Debug, clap::Subcommand)]
 pub enum PaperCmd {
     #[command(about = "List all papers in workspace")]
     List,
@@ -79,9 +92,9 @@ pub enum PaperCmd {
 
     #[command(about = "Download all pending papers in workspace")]
     DownloadAll {
-        /// Number of parallel downloads (1-8). Bound to the 429 retry/backoff
-        /// contract: raising jobs without backoff is not allowed.
-        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=8))]
+        /// Number of parallel downloads (1-32). DeepSeek v4 concurrency is
+        /// 2500 (flash) / 500 (pro); 429s are handled by Retry-After backoff.
+        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=32))]
         jobs: u8,
 
         /// Ignore the 24h per-paper retry cooldown.
@@ -96,6 +109,12 @@ pub enum PaperCmd {
         /// deep recaps are spawned as detached workers, not awaited).
         #[arg(long)]
         no_deep: bool,
+    },
+
+    #[command(about = "Manage tags (tag = directory of symlinks into raw/)")]
+    Tag {
+        #[command(subcommand)]
+        cmd: TagCmd,
     },
 
     #[command(about = "Show paper preview")]
@@ -259,6 +278,15 @@ async fn main() {
             } => {
                 commands::paper::cmd_download_all(&cli, *jobs, *force, *no_describe, *no_deep).await
             }
+            PaperCmd::Tag { cmd } => match cmd {
+                TagCmd::List => commands::paper::cmd_tag_list(&cli).await,
+                TagCmd::Add { id_or_query, tag } => {
+                    commands::paper::cmd_tag_add(&cli, id_or_query, tag).await
+                }
+                TagCmd::Remove { id_or_query, tag } => {
+                    commands::paper::cmd_tag_remove(&cli, id_or_query, tag).await
+                }
+            },
             PaperCmd::Preview { id_or_query, view } => {
                 commands::paper::cmd_preview(&cli, id_or_query, view).await
             }

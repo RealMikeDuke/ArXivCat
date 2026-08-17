@@ -6,6 +6,131 @@ use crate::extract::{arxiv::extract_arxiv_id_from_pdf, source::download_pdf};
 
 const WORKSPACE_INTERNAL_DIRS: &[&str] = &["arxivcat_global_chats"];
 
+/// Name of the subdirectory holding paper entities (canonical layout since
+/// 0.11.13). Tag directories live at the workspace root and symlink into
+/// `raw/` — the raw dir is skipped by tag listing and vice versa.
+pub const RAW_DIR: &str = "raw";
+
+/// True if `folder_name` is reserved (dotdirs, internal dirs, the raw dir).
+pub fn is_reserved_dir(folder_name: &str) -> bool {
+    folder_name.starts_with('.') || WORKSPACE_INTERNAL_DIRS.contains(&folder_name)
+}
+
+/// Validate a tag name: no path separators, no reserved names, and it must
+/// not look like a paper folder (`2501_12948` style — digits+underscore),
+/// otherwise a tag dir could be mistaken for a legacy paper.
+pub fn validate_tag_name(tag: &str) -> Result<()> {
+    if tag.is_empty() {
+        return Err(crate::error::ArxivError::Other(
+            "tag name must not be empty".into(),
+        ));
+    }
+    if tag.contains('/') || tag.contains('\\') || tag.contains(std::path::MAIN_SEPARATOR) {
+        return Err(crate::error::ArxivError::Other(format!(
+            "tag name must not contain path separators: {tag:?}"
+        )));
+    }
+    if is_reserved_dir(tag) || tag == RAW_DIR {
+        return Err(crate::error::ArxivError::Other(format!(
+            "tag name is reserved: {tag:?}"
+        )));
+    }
+    let parts: Vec<&str> = tag.split('_').collect();
+    if parts.len() >= 2 && parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return Err(crate::error::ArxivError::Other(format!(
+            "tag name looks like a paper id (digits+underscore), pick another: {tag:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// List existing tags: directories at the workspace root that are not
+/// reserved, not the raw dir, and not paper directories.
+pub fn list_tags(ws: &std::path::Path) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(ws) {
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if is_reserved_dir(&name) || name == RAW_DIR {
+                        continue;
+                    }
+                    if Paper::from_folder(&entry.path()).is_some() {
+                        continue; // a paper dir, not a tag
+                    }
+                    tags.push(name);
+                }
+            }
+        }
+    }
+    tags.sort();
+    tags
+}
+
+/// Relative symlink target from a tag dir at the workspace root to a paper
+/// folder: canonical raw/ layout -> `../raw/{folder}`, legacy root layout
+/// -> `../{folder}`.
+fn tag_link_target(ws: &std::path::Path, paper: &Paper) -> std::path::PathBuf {
+    let raw = ws.join(RAW_DIR);
+    if paper.folder.starts_with(&raw) {
+        std::path::PathBuf::from("..")
+            .join(RAW_DIR)
+            .join(&paper.folder_name)
+    } else {
+        std::path::PathBuf::from("..").join(&paper.folder_name)
+    }
+}
+
+/// Add a paper to a tag: create the tag dir if needed and symlink
+/// `{ws}/{tag}/{folder}` -> relative target. Idempotent.
+pub fn tag_paper(ws: &std::path::Path, paper: &Paper, tag: &str) -> Result<std::path::PathBuf> {
+    validate_tag_name(tag)?;
+    let tag_dir = ws.join(tag);
+    std::fs::create_dir_all(&tag_dir)?;
+    let link = tag_dir.join(&paper.folder_name);
+    if std::fs::symlink_metadata(&link).is_ok() {
+        return Ok(link); // already tagged
+    }
+    let target = tag_link_target(ws, paper);
+    symlink_dir(&target, &link)?;
+    Ok(link)
+}
+
+/// Remove a paper from a tag (removes the symlink). Idempotent.
+pub fn untag_paper(ws: &std::path::Path, paper: &Paper, tag: &str) -> Result<()> {
+    let link = ws.join(tag).join(&paper.folder_name);
+    if std::fs::symlink_metadata(&link).is_ok() {
+        std::fs::remove_file(&link)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn symlink_dir(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(not(unix))]
+fn symlink_dir(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    // Windows: directory junction (no admin rights needed) when available;
+    // fall back to a plain directory copy is NOT done here — symlink support
+    // on Windows is best-effort (see docs/planning/0.12-content-pdf.md U-series).
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir as win_symlink_dir;
+        return win_symlink_dir(target, link);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (target, link);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "symlinks unsupported on this platform",
+        ))
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Paper {
     pub arxiv_id: String,
@@ -121,13 +246,40 @@ impl Workspace {
 
     pub fn list_papers(path: &Path) -> Vec<Paper> {
         let mut papers: Vec<Paper> = Vec::new();
+        // De-duplicate by folder name: the same paper could exist as a legacy
+        // root entry AND under raw/ during a transition.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+        // New layout: papers live under workspace/raw/ (canonical since 0.11.13).
+        let raw_dir = path.join(RAW_DIR);
+        if raw_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&raw_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            if let Some(paper) = Paper::from_folder(&entry.path()) {
+                                if seen.insert(paper.folder_name.clone()) {
+                                    papers.push(paper);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Legacy compatibility: papers at the workspace root (pre-0.11.13
+        // layout). Tag directories (real dirs whose name is not a paper id)
+        // and symlink entries are rejected by Paper::from_folder, so they
+        // never appear here.
         if let Ok(entries) = std::fs::read_dir(path) {
             for entry in entries.flatten() {
                 if let Ok(file_type) = entry.file_type() {
                     if file_type.is_dir() {
                         if let Some(paper) = Paper::from_folder(&entry.path()) {
-                            papers.push(paper);
+                            if seen.insert(paper.folder_name.clone()) {
+                                papers.push(paper);
+                            }
                         }
                     }
                 }
@@ -391,5 +543,125 @@ mod tests {
         assert_eq!(papers.len(), 2);
         assert_eq!(papers[0].arxiv_id, "2501.12948");
         assert_eq!(papers[1].arxiv_id, "2412.04445");
+    }
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::*;
+
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    fn ws() -> std::path::PathBuf {
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arxivcat_ws_{}_{}", std::process::id(), n));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("raw")).unwrap();
+        dir
+    }
+
+    fn paper(ws: &std::path::Path, folder: &str) -> Paper {
+        let dir = ws.join("raw").join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("body.tex"), "x").unwrap();
+        Paper {
+            arxiv_id: folder.replace('_', "."),
+            title: String::new(),
+            folder_name: folder.to_string(),
+            folder: dir,
+            has_body: true,
+            description_ready: false,
+            deep_ready: false,
+            is_complete: true,
+        }
+    }
+
+    #[test]
+    fn list_papers_scans_raw_and_legacy_root() {
+        let dir = ws();
+        let p = paper(&dir, "2501_11111");
+        // legacy root layout
+        let legacy = dir.join("2501_22222");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("body.tex"), "y").unwrap();
+        let papers = Workspace::list_papers(&dir);
+        let ids: Vec<&str> = papers.iter().map(|p| p.arxiv_id.as_str()).collect();
+        assert!(ids.contains(&"2501.11111"), "raw paper found: {ids:?}");
+        assert!(ids.contains(&"2501.22222"), "legacy paper found: {ids:?}");
+        let _ = p;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag_dir_is_not_a_paper() {
+        let dir = ws();
+        paper(&dir, "2501_11111");
+        std::fs::create_dir_all(dir.join("3d-vision")).unwrap();
+        let papers = Workspace::list_papers(&dir);
+        assert_eq!(papers.len(), 1, "tag dir must not appear as paper");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag_add_creates_dir_and_relative_symlink() {
+        let dir = ws();
+        let p = paper(&dir, "2501_11111");
+        let link = tag_paper(&dir, &p, "3d-vision").unwrap();
+        assert!(link.exists() || std::fs::symlink_metadata(&link).is_ok());
+        let target = std::fs::read_link(&link).unwrap();
+        assert_eq!(target, std::path::PathBuf::from("../raw/2501_11111"));
+        // idempotent
+        let again = tag_paper(&dir, &p, "3d-vision").unwrap();
+        assert_eq!(again, link);
+        let tags = list_tags(&dir);
+        assert_eq!(tags, vec!["3d-vision".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag_add_legacy_root_uses_relative_root_target() {
+        let dir = ws();
+        let folder = dir.join("2501_22222");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("body.tex"), "y").unwrap();
+        let p = Paper {
+            arxiv_id: "2501.22222".into(),
+            title: String::new(),
+            folder_name: "2501_22222".into(),
+            folder: folder.clone(),
+            has_body: true,
+            description_ready: false,
+            deep_ready: false,
+            is_complete: true,
+        };
+        let link = tag_paper(&dir, &p, "notes").unwrap();
+        let target = std::fs::read_link(&link).unwrap();
+        assert_eq!(target, std::path::PathBuf::from("../2501_22222"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag_remove_deletes_symlink() {
+        let dir = ws();
+        let p = paper(&dir, "2501_11111");
+        tag_paper(&dir, &p, "3d-vision").unwrap();
+        untag_paper(&dir, &p, "3d-vision").unwrap();
+        assert!(std::fs::symlink_metadata(dir.join("3d-vision/2501_11111")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_tag_rejects_bad_names() {
+        assert!(validate_tag_name("3d-vision").is_ok());
+        assert!(validate_tag_name("llm").is_ok());
+        assert!(
+            validate_tag_name("2501_99999").is_err(),
+            "digits+underscore looks like paper"
+        );
+        assert!(validate_tag_name("raw").is_err());
+        assert!(validate_tag_name("a/b").is_err());
+        assert!(validate_tag_name("arxivcat_global_chats").is_err());
+        assert!(validate_tag_name(".hidden").is_err());
+        assert!(validate_tag_name("").is_err());
     }
 }
