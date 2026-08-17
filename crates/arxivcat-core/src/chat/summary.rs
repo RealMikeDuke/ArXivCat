@@ -73,11 +73,11 @@ fn api_key() -> Result<String> {
         .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))
 }
 
+/// Summary generation is ALWAYS deepseek-v4-flash (user requirement):
+/// the two-round brief/deep pipeline must not follow the chat model
+/// preference — Pro is for interactive chat, not bulk generation.
 fn model_id() -> String {
-    let model = config::load_model_preference();
-    crate::chat::deepseek::model_id(&model)
-        .unwrap_or("deepseek-v4-flash")
-        .to_string()
+    "deepseek-v4-flash".to_string()
 }
 
 async fn chat_once(

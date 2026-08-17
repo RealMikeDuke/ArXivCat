@@ -103,7 +103,9 @@ papers.
 
 After extraction, the brief summary (`brief_summary.md`, round 1) and the
 deep recap (`deep_summary.md`, round 2) are generated automatically
-(DeepSeek) unless `--no-describe` / `--no-deep` is given. Generation is
+(DeepSeek, ALWAYS `deepseek-v4-flash` — the summary pipeline ignores the
+chat model preference; `chat_model` only affects interactive chat) unless
+`--no-describe` / `--no-deep` is given. Generation is
 best-effort: missing API key or any failure is warned on stderr and never
 affects the download result/exit code. Single downloads wait for both.
 

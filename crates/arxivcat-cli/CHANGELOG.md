@@ -1,5 +1,9 @@
 # Changelog — arxivcat-cli
 
+## [Unreleased]
+- Summary generation (brief/deep) is pinned to `deepseek-v4-flash`;
+  `chat_model` preference applies to interactive chat only.
+
 ## [0.11.14] — 2026-08-17
 
 - `paper tag set <id> <tag1,tag2>` / `paper tag clear <id>`: reclassify
