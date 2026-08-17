@@ -1,6 +1,6 @@
 # Changelog — arxivcat-cli
 
-## [Unreleased]
+## [0.11.14] — 2026-08-17
 
 - `paper tag set <id> <tag1,tag2>` / `paper tag clear <id>`: reclassify
   (replace the full tag list, removing unlisted tags' symlinks) and remove

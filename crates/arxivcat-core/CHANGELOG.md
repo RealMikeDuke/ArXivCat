@@ -1,6 +1,6 @@
 # Changelog — arxivcat-core
 
-## [Unreleased]
+## [0.11.14] — 2026-08-17
 
 - `PaperManifest.categories`: authoritative data-layer record of tags —
   `scan_manifest` preserves it; tag add/remove/set/clear keep manifest and
