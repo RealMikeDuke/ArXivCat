@@ -1,5 +1,17 @@
 # Changelog — arxivcat-core
 
+## [Unreleased]
+
+- `PaperManifest.categories`: authoritative data-layer record of tags —
+  `scan_manifest` preserves it; tag add/remove/set/clear keep manifest and
+  symlinks in sync.
+- `set_tags` / `clear_tags`: full reclassification (removes unlisted tags'
+  symlinks) and remove-all.
+- `export_workspace` / `import_workspace`: .tar.gz export of all papers
+  under a uniform `raw/{folder}` layout (classification travels in each
+  manifest); import dedupes by folder name, copies papers, rebuilds tag
+  dirs + relative symlinks from manifest categories. Idempotent.
+
 ## [0.11.13] — 2026-08-17
 
 - Workspace layout: papers are canonical under `{workspace}/raw/`; legacy
@@ -9,16 +21,6 @@
   A tag is a directory at the workspace root holding relative symlinks
   into `raw/` (`../raw/{folder}`; legacy `../{folder}`) — multi-tag means
   one symlink per tag dir. Tag names must not look like paper ids.
-## [Unreleased]
-
-- `paper tag list` / `paper tag add <id> <tag>` / `paper tag remove <id> <tag>`:
-  tag = directory at the workspace root symlinking into `raw/`; new tag dirs
-  auto-created; multi-tag supported; tag names validated. JSON envelope for
-  add/remove: `{tag, arxiv_id, link}` / `{tag, arxiv_id, removed}`.
-- `paper download` now places papers under `{workspace}/raw/{id}` (was
-  `{workspace}/{id}`); the raw dir is created on demand. Legacy root papers
-  remain readable.
-
 ## [0.11.12] — 2026-08-16
 
 - `paper download` / `download-all` generate the brief automatically after
