@@ -325,6 +325,20 @@ Append `--json` anywhere in the command to get structured output. Supported comm
 
 Tags are recorded in the paper manifest (`categories`) AND materialized as
 symlinks in `{workspace}/{tag}/`; `set`/`clear` remove stale symlinks.
+
+**Export / Import** (move a library between machines):
+```
+arxivcat workspace export <out.tar.gz>   # papers (raw/ + legacy) + manifest categories
+arxivcat workspace import <in.tar.gz>    # copy new papers, rebuild tag symlinks
+```
+- Export archives every paper under a uniform `raw/{folder}` layout;
+  classification travels inside each manifest (`categories`), so no
+  separate tag packing is needed.
+- Import dedupes by folder name (existing papers are skipped), then rebuilds
+  tag directories + relative symlinks (`../raw/{folder}`) from each
+  manifest's categories. Idempotent.
+- Symlinks are native on Linux/macOS; Windows junction support is future
+  work.
 | `paper preview` | Paper metadata + content |
 | `paper info` | Full paper object with file sizes |
 | `paper describe` | `{arxiv_id, description_ready}` |

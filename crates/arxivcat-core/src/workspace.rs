@@ -787,3 +787,197 @@ mod tag_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Recursively copy a directory tree (used by import).
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &target)?;
+        }
+        // symlinks are NOT followed/copied: papers are real dirs; a stray
+        // symlink inside a paper dir is skipped (avoid breaking out of the
+        // archive on import).
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportStats {
+    pub papers: usize,
+    pub archive: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImportStats {
+    pub imported: usize,
+    pub skipped: usize,
+    pub tags_rebuilt: usize,
+}
+
+/// Export the whole workspace into a .tar.gz: every paper (raw/ canonical
+/// plus legacy root) is archived under a uniform `raw/{folder}` layout so
+/// import is layout-independent. Classification lives in each manifest
+/// (`categories`) — no separate tag packing needed.
+pub fn export_workspace(ws: &std::path::Path, out: &std::path::Path) -> Result<ExportStats> {
+    let papers = Workspace::list_papers(ws);
+    let file = std::fs::File::create(out)?;
+    let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut tar = tar::Builder::new(enc);
+    for p in &papers {
+        let arc_name = format!("raw/{}", p.folder_name);
+        tar.append_dir_all(&arc_name, &p.folder)?;
+    }
+    tar.finish()?;
+    Ok(ExportStats {
+        papers: papers.len(),
+        archive: out.display().to_string(),
+    })
+}
+
+/// Import a workspace archive (.tar.gz with `raw/{folder}` layout): copy
+/// papers that do not already exist (paper-level dedupe by folder name),
+/// then rebuild tag dirs + symlinks from each manifest's `categories`.
+pub fn import_workspace(ws: &std::path::Path, archive: &std::path::Path) -> Result<ImportStats> {
+    let raw_dir = ws.join(RAW_DIR);
+    std::fs::create_dir_all(&raw_dir)?;
+
+    let tmp = std::env::temp_dir().join(format!("arxivcat_import_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp)?;
+
+    let res = (|| -> Result<ImportStats> {
+        let file = std::fs::File::open(archive)?;
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut ar = tar::Archive::new(dec);
+        ar.unpack(&tmp)?;
+
+        let mut imported = 0usize;
+        let mut skipped = 0usize;
+        let mut tags_rebuilt = 0usize;
+
+        let src_raw = tmp.join(RAW_DIR);
+        if src_raw.is_dir() {
+            for entry in std::fs::read_dir(&src_raw)? {
+                let entry = entry?;
+                let ty = entry.file_type()?;
+                if !ty.is_dir() {
+                    continue;
+                }
+                let folder_name = entry.file_name().to_string_lossy().to_string();
+                let dst = raw_dir.join(&folder_name);
+                if dst.exists() {
+                    skipped += 1;
+                    continue;
+                }
+                copy_dir_all(&entry.path(), &dst)?;
+                imported += 1;
+
+                // Rebuild tags from the manifest (paper manifest exists for
+                // canonical folders; legacy entries without one are skipped).
+                if let Ok(Some(m)) = crate::manifest::PaperManifest::load(&dst) {
+                    let paper = Paper {
+                        arxiv_id: m.arxiv_id.clone(),
+                        title: m.title.clone(),
+                        folder_name: folder_name.clone(),
+                        folder: dst.clone(),
+                        has_body: true,
+                        description_ready: m.description_ready,
+                        deep_ready: m.deep_ready,
+                        is_complete: true,
+                    };
+                    for tag in &m.categories {
+                        if let Ok(_) = tag_paper(ws, &paper, tag) {
+                            tags_rebuilt += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ImportStats {
+            imported,
+            skipped,
+            tags_rebuilt,
+        })
+    })();
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    res
+}
+
+#[cfg(test)]
+mod export_import_tests {
+    use super::*;
+
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(100);
+
+    fn ws() -> std::path::PathBuf {
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arxivcat_expws_{}_{}", std::process::id(), n));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("raw")).unwrap();
+        dir
+    }
+
+    fn paper(ws: &std::path::Path, folder: &str) -> Paper {
+        let dir = ws.join("raw").join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("body.tex"), "x").unwrap();
+        Paper {
+            arxiv_id: folder.replace('_', "."),
+            title: String::new(),
+            folder_name: folder.to_string(),
+            folder: dir,
+            has_body: true,
+            description_ready: false,
+            deep_ready: false,
+            is_complete: true,
+        }
+    }
+
+    #[test]
+    fn export_import_roundtrip_preserves_papers_and_tags() {
+        let ws_src = ws();
+        let p = paper(&ws_src, "2501_11111");
+        tag_paper(&ws_src, &p, "3d-vision").unwrap();
+        std::fs::write(p.folder.join("note.txt"), "hello").unwrap();
+
+        let out = std::env::temp_dir().join(format!("arxivcat_exp_{}.tar.gz", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let stats = export_workspace(&ws_src, &out).unwrap();
+        assert_eq!(stats.papers, 1);
+
+        let ws_dst = ws();
+        let imp = import_workspace(&ws_dst, &out).unwrap();
+        assert_eq!(imp.imported, 1);
+        assert_eq!(imp.skipped, 0);
+        assert_eq!(imp.tags_rebuilt, 1);
+
+        let dst_paper = ws_dst.join("raw/2501_11111");
+        assert!(dst_paper.join("body.tex").is_file());
+        assert_eq!(
+            std::fs::read_to_string(dst_paper.join("note.txt")).unwrap(),
+            "hello"
+        );
+        assert!(std::fs::symlink_metadata(ws_dst.join("3d-vision/2501_11111")).is_ok());
+        let m = crate::manifest::PaperManifest::load(&dst_paper)
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.categories, vec!["3d-vision"]);
+
+        // idempotent: second import skips
+        let imp2 = import_workspace(&ws_dst, &out).unwrap();
+        assert_eq!(imp2.imported, 0);
+        assert_eq!(imp2.skipped, 1);
+
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_dir_all(&ws_src);
+        let _ = std::fs::remove_dir_all(&ws_dst);
+    }
+}

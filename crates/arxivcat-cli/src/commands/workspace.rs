@@ -73,3 +73,67 @@ pub async fn cmd_scan(cli: &Cli) {
         }
     }
 }
+
+pub async fn cmd_export(cli: &Cli, out: &std::path::Path) {
+    let ws_path = crate::commands::resolve_workspace(cli);
+    let ws_path = match ws_path {
+        Some(p) => p,
+        None => {
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured. use 'arxivcat workspace open <path>'",
+            );
+        }
+    };
+    match arxivcat_core::workspace::export_workspace(&ws_path, out) {
+        Ok(stats) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&stats).unwrap_or_default()
+                );
+            } else {
+                println!(
+                    "{} {} papers -> {}",
+                    "exported",
+                    stats.papers,
+                    out.display()
+                );
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}
+
+pub async fn cmd_import(cli: &Cli, archive: &std::path::Path) {
+    let ws_path = crate::commands::resolve_workspace(cli);
+    let ws_path = match ws_path {
+        Some(p) => p,
+        None => {
+            crate::commands::die(
+                cli,
+                crate::commands::EXIT_CONFIG,
+                "config",
+                "no workspace configured. use 'arxivcat workspace open <path>'",
+            );
+        }
+    };
+    match arxivcat_core::workspace::import_workspace(&ws_path, archive) {
+        Ok(stats) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&stats).unwrap_or_default()
+                );
+            } else {
+                println!(
+                    "{} imported {} / skipped {} / tags rebuilt {}",
+                    "imported", stats.imported, stats.skipped, stats.tags_rebuilt
+                );
+            }
+        }
+        Err(e) => crate::commands::die_err(cli, &e),
+    }
+}

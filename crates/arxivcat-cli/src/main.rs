@@ -57,6 +57,12 @@ pub enum WorkspaceCmd {
 
     #[command(about = "Scan workspace root for PDFs and create paper folders")]
     Scan,
+
+    #[command(about = "Export the workspace to a .tar.gz (papers + manifest categories)")]
+    Export { out: PathBuf },
+
+    #[command(about = "Import a workspace .tar.gz (papers, then rebuild tag symlinks)")]
+    Import { archive: PathBuf },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -269,6 +275,10 @@ async fn main() {
         Commands::Workspace { cmd } => match cmd {
             WorkspaceCmd::Open { path } => commands::workspace::cmd_open(&cli, path).await,
             WorkspaceCmd::Scan => commands::workspace::cmd_scan(&cli).await,
+            WorkspaceCmd::Export { out } => commands::workspace::cmd_export(&cli, out).await,
+            WorkspaceCmd::Import { archive } => {
+                commands::workspace::cmd_import(&cli, archive).await
+            }
         },
         Commands::Paper { cmd } => match cmd {
             PaperCmd::List => commands::paper::cmd_list(&cli).await,
