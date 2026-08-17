@@ -95,12 +95,7 @@ pub async fn cmd_export(cli: &Cli, out: &std::path::Path) {
                     serde_json::to_string_pretty(&stats).unwrap_or_default()
                 );
             } else {
-                println!(
-                    "{} {} papers -> {}",
-                    "exported",
-                    stats.papers,
-                    out.display()
-                );
+                println!("exported {} papers -> {}", stats.papers, out.display());
             }
         }
         Err(e) => crate::commands::die_err(cli, &e),
@@ -129,8 +124,8 @@ pub async fn cmd_import(cli: &Cli, archive: &std::path::Path) {
                 );
             } else {
                 println!(
-                    "{} imported {} / skipped {} / tags rebuilt {}",
-                    "imported", stats.imported, stats.skipped, stats.tags_rebuilt
+                    "imported {} / skipped {} / tags rebuilt {}",
+                    stats.imported, stats.skipped, stats.tags_rebuilt
                 );
             }
         }
