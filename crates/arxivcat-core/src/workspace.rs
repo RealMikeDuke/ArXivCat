@@ -892,7 +892,7 @@ pub fn import_workspace(ws: &std::path::Path, archive: &std::path::Path) -> Resu
                         is_complete: true,
                     };
                     for tag in &m.categories {
-                        if let Ok(_) = tag_paper(ws, &paper, tag) {
+                        if tag_paper(ws, &paper, tag).is_ok() {
                             tags_rebuilt += 1;
                         }
                     }
