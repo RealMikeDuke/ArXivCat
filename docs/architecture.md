@@ -22,7 +22,9 @@ arxivcat (workspace)
 每篇论文一个目录（文件夹名 = base id，去版本号），manifest 是单一事实源：
 
 ```
-{workspace}/2501_12948/
+{workspace}/raw/2501_12948/   ← papers live under raw/ (canonical since 0.11.13)
+{workspace}/3d-vision/        ← tag dir: symlinks into raw/ (paper tag)
+{workspace}/llm/              ← multi-tag = one symlink per tag dir
 ├── paper.json           PaperManifest：arxiv_id/title/files/ready 标记/cooldown
 ├── body.tex             提取的正文（LaTeX 原样）
 ├── appendix.tex         附录（若有）
@@ -38,6 +40,7 @@ arxivcat (workspace)
 关键规则：
 - `description.md` 是历史遗留名，写路径惰性迁移为 `brief_summary.md`；空 stub 永不遮蔽真实 brief（`brief_complete` 要求标记 + 文件非空）。
 - `download-all` 的 pending = 无 `body.tex`；`--force` 跳过 24h cooldown。
+- 布局兼容：workspace 根下的 legacy 论文目录照常读取；tag 目录（真实目录、名字非论文 ID）与 symlink 条目不会被当成论文。
 
 ## 3. 执行模型（进程架构）
 

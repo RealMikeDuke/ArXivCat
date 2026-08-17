@@ -1,5 +1,24 @@
 # Changelog — arxivcat-core
 
+## [0.11.13] — 2026-08-17
+
+- Workspace layout: papers are canonical under `{workspace}/raw/`; legacy
+  root-level papers still read. `list_papers` scans raw/ + legacy root,
+  de-dupes by folder name, and never treats tag dirs/symlinks as papers.
+- Tags: `list_tags` / `tag_paper` / `untag_paper` / `validate_tag_name`.
+  A tag is a directory at the workspace root holding relative symlinks
+  into `raw/` (`../raw/{folder}`; legacy `../{folder}`) — multi-tag means
+  one symlink per tag dir. Tag names must not look like paper ids.
+## [Unreleased]
+
+- `paper tag list` / `paper tag add <id> <tag>` / `paper tag remove <id> <tag>`:
+  tag = directory at the workspace root symlinking into `raw/`; new tag dirs
+  auto-created; multi-tag supported; tag names validated. JSON envelope for
+  add/remove: `{tag, arxiv_id, link}` / `{tag, arxiv_id, removed}`.
+- `paper download` now places papers under `{workspace}/raw/{id}` (was
+  `{workspace}/{id}`); the raw dir is created on demand. Legacy root papers
+  remain readable.
+
 ## [0.11.12] — 2026-08-16
 
 - `paper download` / `download-all` generate the brief automatically after
