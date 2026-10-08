@@ -27,8 +27,15 @@ fn test_cfg(server: &MockServer) -> HttpConfig {
     cfg
 }
 
+/// Both tests point the process-global `APPDATA` at their own temp config dir
+/// and `save_token` writes there. Run concurrently, one test can read the
+/// directory the other has already dropped (flaky "no ... API key configured").
+/// Serialize the env-owning sections instead of racing.
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn brief_then_deep_uses_two_rounds_and_appends_tables() {
+    let _env_guard = ENV_LOCK.lock().await;
     let server = MockServer::start().await;
     let calls = std::sync::Arc::new(AtomicUsize::new(0));
 
@@ -109,6 +116,7 @@ async fn brief_then_deep_uses_two_rounds_and_appends_tables() {
 
 #[tokio::test]
 async fn deep_rebuilds_missing_brief_first() {
+    let _env_guard = ENV_LOCK.lock().await;
     let server = MockServer::start().await;
     let calls = std::sync::Arc::new(AtomicUsize::new(0));
     let c1 = calls.clone();
