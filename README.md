@@ -42,7 +42,7 @@ arxivcat paper list --json
 - `paper list|download|download-all [--jobs N] [--force]|preview|note|strip|info|describe|deep-summarize|open|pdf|remove|redownload` — manage papers
 - `paper tag list|add|remove|set|clear` — classify papers (tag = symlink dir into `raw/`)
 - `workspace export <out.tar.gz>` / `workspace import <in.tar.gz>` — move a library between machines
-- `token status|set|validate` — manage the DeepSeek API key (optional, for AI features)
+- `token list|use|status|set|validate` — select DeepSeek or configure a custom OpenAI-compatible API
 
 ## Documentation
 

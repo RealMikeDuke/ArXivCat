@@ -42,13 +42,16 @@ async fn brief_then_deep_uses_two_rounds_and_appends_tables() {
             let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
             let msgs = body["messages"].as_array().unwrap();
             if n == 0 {
-                // Round 1: system + user only.
+                // Round 1: system + user only. Streaming keeps the proxy alive,
+                // so the output budget does not need to be artificially small.
                 assert_eq!(msgs.len(), 2);
                 assert_eq!(msgs[0]["role"], "system");
                 assert_eq!(msgs[1]["role"], "user");
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "choices": [{"message": {"role": "assistant", "content": "BRIEF OUTPUT"}}]
-                }))
+                assert_eq!(body["max_tokens"], 8000);
+                assert_eq!(body["stream"], true);
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"BRIEF \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"OUTPUT\"}}]}\n\ndata: [DONE]\n\n")
             } else {
                 // Round 2: system + user + assistant(brief) + user(deep).
                 assert_eq!(msgs.len(), 4);
@@ -57,14 +60,16 @@ async fn brief_then_deep_uses_two_rounds_and_appends_tables() {
                 assert_eq!(msgs[2]["role"], "assistant");
                 assert_eq!(msgs[2]["content"], "BRIEF OUTPUT");
                 assert_eq!(msgs[3]["role"], "user");
+                assert_eq!(body["max_tokens"], 16000);
+                assert_eq!(body["stream"], true);
                 // Deep instruction is in round 2's user message.
                 assert!(msgs[3]["content"]
                     .as_str()
                     .unwrap()
                     .contains("DEEP technical recap"));
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "choices": [{"message": {"role": "assistant", "content": "DEEP OUTPUT"}}]
-                }))
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"DEEP OUTPUT\"}}]}\n\ndata: [DONE]\n\n")
             }
         })
         .expect(2)
@@ -116,15 +121,17 @@ async fn deep_rebuilds_missing_brief_first() {
             let msgs = body["messages"].as_array().unwrap();
             if n == 0 {
                 assert_eq!(msgs.len(), 2, "round 1 = brief");
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "choices": [{"message": {"role": "assistant", "content": "B1"}}]
-                }))
+                assert_eq!(body["stream"], true);
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"B1\"}}]}\n\ndata: [DONE]\n\n")
             } else {
                 assert_eq!(msgs.len(), 4, "round 2 continues the conversation");
                 assert_eq!(msgs[2]["content"], "B1");
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "choices": [{"message": {"role": "assistant", "content": "D1"}}]
-                }))
+                assert_eq!(body["stream"], true);
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"D1\"}}]}\n\ndata: [DONE]\n\n")
             }
         })
         .expect(2)

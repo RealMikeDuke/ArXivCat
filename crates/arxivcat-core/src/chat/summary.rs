@@ -11,6 +11,7 @@ use std::path::Path;
 
 use crate::config;
 use crate::error::{ArxivError, Result};
+use futures_util::StreamExt;
 
 /// Shared system prompt for BOTH rounds. Byte-identical across the two
 /// requests is what makes the second round's prefix hit the cache — never
@@ -69,15 +70,15 @@ fn build_user1(paper_dir: &Path, arxiv_id: &str, title: &str) -> Result<String> 
 }
 
 fn api_key() -> Result<String> {
+    let profile = config::load_active_summary_api_profile()?;
     config::load_cached_token()
-        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))
+        .ok_or_else(|| ArxivError::Config(format!("no {} API key configured", profile.name)))
 }
 
-/// Summary generation is ALWAYS deepseek-v4-flash (user requirement):
-/// the two-round brief/deep pipeline must not follow the chat model
-/// preference — Pro is for interactive chat, not bulk generation.
-fn model_id() -> String {
-    "deepseek-v4-flash".to_string()
+/// Summary generation uses the active provider credentials but always targets
+/// the configured DeepSeek Flash model, independent of interactive chat.
+fn model_id() -> Result<String> {
+    Ok(config::load_active_summary_api_profile()?.model)
 }
 
 async fn chat_once(
@@ -87,10 +88,10 @@ async fn chat_once(
 ) -> Result<String> {
     let key = api_key()?;
     let body = serde_json::json!({
-        "model": model_id(),
+        "model": model_id()?,
         "messages": messages,
         "max_tokens": max_tokens,
-        "stream": false,
+        "stream": true,
     });
     let response = cfg
         .client
@@ -110,15 +111,47 @@ async fn chat_once(
         )));
     }
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| ArxivError::Chat(format!("failed to parse summary response: {e}")))?;
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut content = String::new();
+    let mut done = false;
 
-    let content = json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ArxivError::Chat(format!("failed to read summary stream: {e}")))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim_end_matches('\r').to_string();
+            buffer.drain(..=pos);
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                done = true;
+                break;
+            }
+            if data.is_empty() {
+                continue;
+            }
+            let json: serde_json::Value = serde_json::from_str(data).map_err(|e| {
+                ArxivError::Chat(format!("failed to parse summary stream event: {e}"))
+            })?;
+            if let Some(part) = json["choices"][0]["delta"]["content"].as_str() {
+                content.push_str(part);
+            }
+        }
+        if done {
+            break;
+        }
+    }
+
+    if !done {
+        return Err(ArxivError::Chat(
+            "summary stream ended before [DONE]".into(),
+        ));
+    }
     if content.is_empty() {
         return Err(ArxivError::Chat("empty summary response".into()));
     }
@@ -140,7 +173,7 @@ pub async fn generate_brief(
             serde_json::json!({"role": "system", "content": SUMMARY_SYSTEM}),
             serde_json::json!({"role": "user", "content": user1}),
         ],
-        1400,
+        8000,
     )
     .await?;
 

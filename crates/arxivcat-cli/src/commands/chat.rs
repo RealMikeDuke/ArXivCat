@@ -46,7 +46,7 @@ async fn run_repl(cli: &Cli, cfg: ReplConfig<'_>) {
     }
     println!(
         "{}",
-        gray("Commands: /quit /model <Flash|Pro> /thinking /context [field] /save /load /history /clear /help")
+        gray("Commands: /quit /model <Flash|Pro> (DeepSeek only) /thinking /context [field] /save /load /history /clear /help")
     );
     println!();
 

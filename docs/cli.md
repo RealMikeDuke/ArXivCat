@@ -1,6 +1,6 @@
 # ArXivCat CLI
 
-ArXivCat is a command-line tool for downloading, extracting, and managing arXiv papers. It downloads LaTeX source code, splits it into readable `body.tex` / `appendix.tex`, generates AI-powered descriptions, and supports interactive chat over papers via DeepSeek.
+ArXivCat is a command-line tool for downloading, extracting, and managing arXiv papers. It downloads LaTeX source code, splits it into readable `body.tex` / `appendix.tex`, generates AI-powered descriptions, and supports interactive chat through selectable OpenAI-compatible API providers.
 
 **Binary**: `arxivcat` (Rust, built via `cargo build --release --bin arxivcat`).
 
@@ -12,8 +12,12 @@ ArXivCat is a command-line tool for downloading, extracting, and managing arXiv 
 # 1. Set your workspace
 arxivcat workspace open F:\zrs\paper
 
-# 2. Set your DeepSeek API key (for AI features)
+# 2. Set the default DeepSeek API key (profile 1, for AI features)
 arxivcat token set
+
+# Or configure a custom OpenAI-compatible API (profile 2)
+arxivcat token set --profile 2
+arxivcat token use 2
 
 # 3. Download a paper (accepts URLs or raw IDs)
 arxivcat paper download https://arxiv.org/abs/2501.12948
@@ -103,8 +107,9 @@ papers.
 
 After extraction, the brief summary (`brief_summary.md`, round 1) and the
 deep recap (`deep_summary.md`, round 2) are generated automatically
-(DeepSeek, ALWAYS `deepseek-v4-flash` — the summary pipeline ignores the
-chat model preference; `chat_model` only affects interactive chat) unless
+(DeepSeek Flash, independent of the interactive chat model preference;
+with the custom xfast provider this is `deepseek/deepseek-v4.1-flash`,
+while the official DeepSeek provider uses `deepseek-v4-flash`) unless
 `--no-describe` / `--no-deep` is given. Generation is
 best-effort: missing API key or any failure is warned on stderr and never
 affects the download result/exit code. Single downloads wait for both.
@@ -195,7 +200,7 @@ Open the paper's PDF in the system viewer. Falls back to `https://arxiv.org/pdf/
 
 ### `chat`
 
-Interactive AI chat with papers. Requires a valid DeepSeek API key (`arxivcat token set`).
+Interactive AI chat with papers. Requires a token for the active API provider (`arxivcat token set`).
 
 ```
 arxivcat chat side <ID_OR_QUERY>    # Chat scoped to one paper
@@ -208,8 +213,8 @@ Both `side` and `global` support these in-chat commands:
 
 | Command | Description |
 |---|---|
-| `/model Flash\|Pro` | Switch between DeepSeek models. |
-| `/thinking` | Toggle deep reasoning mode. |
+| `/model Flash\|Pro` | Switch between DeepSeek models (profile 1 only). |
+| `/thinking` | Toggle deep reasoning mode (profile 1 only). |
 | `/context body\|appendix\|description\|note` | Toggle which paper fields are included as context. |
 | `/save` | Save current chat session to disk. |
 | `/load` | Load a previously saved session. |
@@ -226,19 +231,25 @@ Both `side` and `global` support these in-chat commands:
 
 ### `token`
 
-Manage the DeepSeek API key (stored in `%APPDATA%\ArxivCat\config.json`). Also readable from `DEEPSEEK_API_KEY` environment variable.
+Manage the active API provider and its token (stored in `%APPDATA%\ArxivCat\config.json`). Profile 1 is DeepSeek. Profile 2 is a custom OpenAI-compatible API: its base URL, model, and token are requested locally by the CLI and are not embedded in this repository. `DEEPSEEK_API_KEY` remains an environment override for profile 1.
 
 ```
-arxivcat token status      # Show whether token is configured (masked) + validate
-arxivcat token set         # Prompt to enter token via stdin
-arxivcat token validate    # Test token against api.deepseek.com/models
+arxivcat token list                  # List provider IDs, endpoint, model, and active state
+arxivcat token set --profile 2       # Enter a custom base URL, model, and token
+arxivcat token use 2                 # Select the saved custom API
+arxivcat token set                   # Prompt for the active provider token via stdin
+arxivcat token set --profile 1       # Set DeepSeek token without switching providers
+arxivcat token status                # Show active provider and masked token, then validate
+arxivcat token validate              # Test active token against its /models endpoint
 ```
 
 | Subcommand | Description |
 |---|---|
-| `status` | Print masked token (e.g. `sk-5...7abe`), response time, and validity. JSON: `{"configured":true,"masked":"sk-5...7abe","response_time_ms":151,"valid":true}`. |
-| `set` | Prompt for token on stdin, save to config. |
-| `validate` | Test cached token against `https://api.deepseek.com/models`. Returns response time and validity status. |
+| `list` | List DeepSeek and the saved custom API. Custom endpoint/model are shown only after local configuration. `--json` is supported. |
+| `use <1\|2>` | Persist the active provider. `--json` is supported. |
+| `status` | Print active provider, masked token (e.g. `sk-5...7abe`), response time, and validity. JSON adds `profile`, `provider`, and `model` to the existing fields. |
+| `set [--profile <1\|2>]` | Profile 1 prompts for a DeepSeek token. Profile 2 prompts for a base URL, model, and token, then saves them atomically. Token input is not echoed. Does not switch provider. |
+| `validate` | Test the active token against that provider's `/models` endpoint. Returns response time and validity status. |
 
 ---
 
@@ -287,12 +298,18 @@ Config file: `%APPDATA%\ArxivCat\config.json`
 ```json
 {
   "deepseek_api_key": "sk-...",
+  "api_profile": 2,
+  "custom_api": {
+    "base_url": "https://api.example.com/v1",
+    "model": "your-model-id",
+    "api_key": "sk-..."
+  },
   "chat_model": "Flash",
   "workspace_path": "F:\\zrs\\paper"
 }
 ```
 
-The API key can also be set via the `DEEPSEEK_API_KEY` environment variable (takes precedence over config file).
+`deepseek_api_key` is used by profile 1. `custom_api` stores profile 2's local endpoint, model, and token. The `api_profile` field selects the active provider. `DEEPSEEK_API_KEY` takes precedence over the saved token when profile 1 is active.
 
 ---
 

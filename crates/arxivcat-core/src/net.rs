@@ -29,9 +29,10 @@ impl HttpConfig {
                 "arxivcat/{} (+https://github.com/RealMikeDuke/ArXivCat)",
                 env!("CARGO_PKG_VERSION")
             ))
-            // Total request timeout: a stalled connection must not hang a
-            // headless run forever. Per-request overrides can shorten it.
-            .timeout(Duration::from_secs(120))
+            // Long summaries stream incremental data through the proxy, but
+            // reqwest's timeout covers the entire response body, not just time
+            // between chunks. Leave enough room for a full deep recap.
+            .timeout(Duration::from_secs(600))
             .build()
             .map_err(ArxivError::Http)?;
 
@@ -39,8 +40,10 @@ impl HttpConfig {
             client,
             arxiv_base: std::env::var("ARXIVCAT_ARXIV_BASE_URL")
                 .unwrap_or_else(|_| "https://arxiv.org".to_string()),
-            deepseek_base: std::env::var("ARXIVCAT_DEEPSEEK_BASE_URL")
-                .unwrap_or_else(|_| "https://api.deepseek.com".to_string()),
+            deepseek_base: match std::env::var("ARXIVCAT_DEEPSEEK_BASE_URL") {
+                Ok(base) => base,
+                Err(_) => crate::config::load_active_api_profile()?.base_url,
+            },
             max_retries: 3,
             backoff_base_ms: 500,
             retry_after_cap_ms: 30_000,

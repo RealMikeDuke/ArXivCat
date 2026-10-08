@@ -1,8 +1,20 @@
 # Changelog — arxivcat-cli
 
 ## [Unreleased]
-- Summary generation (brief/deep) is pinned to `deepseek-v4-flash`;
-  `chat_model` preference applies to interactive chat only.
+- Multi-provider API: `token list` shows the built-in DeepSeek provider
+  (profile 1) and a locally configured OpenAI-compatible provider
+  (profile 2); `token use <1|2>` switches the active provider; `token set
+  [--profile <1|2>]` stores a provider token (profile 2 also prompts for its
+  base URL and model). Secrets are read without echo (rpassword) and never
+  appear in the repository.
+- `token status` / `token validate` report and test the ACTIVE provider's
+  token instead of always DeepSeek; status output gains the provider/model.
+- Summary requests now stream (`stream: true`, SSE parsed incrementally)
+  with an 8000 (brief) / 16000 (deep) output budget, so a long deep recap no
+  longer dies on the old 120 s whole-response timeout (now 600 s).
+- Summary generation (brief/deep) is pinned to DeepSeek Flash;
+  with the custom xfast provider it uses `deepseek/deepseek-v4.1-flash`,
+  while `chat_model` remains interactive-chat-only.
 
 ## [0.11.14] — 2026-08-17
 

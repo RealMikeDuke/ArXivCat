@@ -37,10 +37,15 @@ where
     F2: FnMut(&str),
     F3: FnMut(&str),
 {
+    let profile = config::load_active_api_profile()?;
     let api_key = config::load_cached_token()
-        .ok_or_else(|| ArxivError::Config("no DeepSeek API key configured".into()))?;
+        .ok_or_else(|| ArxivError::Config(format!("no {} API key configured", profile.name)))?;
 
-    let model_id = model_id(model).unwrap_or("deepseek-v4-flash");
+    let model_id = if profile.id == config::DEEPSEEK_PROFILE {
+        model_id(model).unwrap_or("deepseek-v4-flash")
+    } else {
+        &profile.model
+    };
 
     let mut body = serde_json::json!({
         "model": model_id,
@@ -48,10 +53,10 @@ where
         "stream": true,
     });
 
-    if reasoning_effort != "off" {
+    if profile.supports_thinking && reasoning_effort != "off" {
         body["thinking"] = serde_json::json!({"type": "enabled"});
         body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
-    } else {
+    } else if profile.supports_thinking {
         // Explicitly disable thinking — the API defaults to enabled, so an
         // omitted field would not actually turn it off.
         body["thinking"] = serde_json::json!({"type": "disabled"});

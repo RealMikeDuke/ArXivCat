@@ -40,7 +40,7 @@ pub enum Commands {
         cmd: ChatCmd,
     },
 
-    #[command(about = "Manage API token")]
+    #[command(about = "Manage API provider and token")]
     Token {
         #[command(subcommand)]
         cmd: TokenCmd,
@@ -212,14 +212,26 @@ pub enum InternalCmd {
 
 #[derive(Subcommand)]
 pub enum TokenCmd {
-    #[command(about = "Show token status (masked)")]
+    #[command(about = "Show active provider and token status (masked)")]
     Status,
 
-    #[command(about = "Set DeepSeek API token")]
-    Set,
+    #[command(about = "Set an API token for a provider (default: active provider)")]
+    Set {
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=2))]
+        profile: Option<u8>,
+    },
 
-    #[command(about = "Validate cached token")]
+    #[command(about = "Validate the active provider token")]
     Validate,
+
+    #[command(about = "List built-in API providers")]
+    List,
+
+    #[command(about = "Switch the active API provider")]
+    Use {
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=2))]
+        profile: u8,
+    },
 }
 
 #[tokio::main]
@@ -344,8 +356,10 @@ async fn main() {
         },
         Commands::Token { cmd } => match cmd {
             TokenCmd::Status => commands::token::cmd_status(&cli).await,
-            TokenCmd::Set => commands::token::cmd_set(&cli).await,
+            TokenCmd::Set { profile } => commands::token::cmd_set(&cli, *profile).await,
             TokenCmd::Validate => commands::token::cmd_validate(&cli).await,
+            TokenCmd::List => commands::token::cmd_list(&cli).await,
+            TokenCmd::Use { profile } => commands::token::cmd_use(&cli, *profile).await,
         },
     }
 }

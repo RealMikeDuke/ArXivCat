@@ -1,8 +1,20 @@
 # Changelog — arxivcat-core
 
 ## [Unreleased]
-- Summary generation (brief/deep) is pinned to `deepseek-v4-flash`;
-  `chat_model` preference applies to interactive chat only.
+- API provider selection: `Config.api_profile` (1 = DeepSeek, 2 = custom)
+  plus `Config.custom_api {base_url, model, api_key}`; helpers
+  `active_api_profile`, `active_summary_api_profile`, `load_config`,
+  `save_custom_api`, `validate_custom_api`, `use_api_profile`.
+  `load_cached_token` resolves through the active profile, and
+  `HttpConfig.deepseek_base` follows it unless
+  `ARXIVCAT_DEEPSEEK_BASE_URL` is set.
+- Summary generation streams the completion (`stream: true`, SSE parsed
+  incrementally) so the client timeout covers a full deep recap (600 s); the
+  summary model comes from the provider (profile 1 → `deepseek-v4-flash`,
+  custom → `deepseek/deepseek-v4.1-flash`) and never from `chat_model`.
+- Summary generation (brief/deep) is pinned to DeepSeek Flash;
+  with the custom xfast provider it uses `deepseek/deepseek-v4.1-flash`,
+  while `chat_model` remains interactive-chat-only.
 
 ## [0.11.14] — 2026-08-17
 

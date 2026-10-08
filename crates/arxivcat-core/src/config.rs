@@ -2,6 +2,63 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 
+pub const DEEPSEEK_PROFILE: u8 = 1;
+pub const CUSTOM_PROFILE: u8 = 2;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomApiConfig {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ApiProfile {
+    pub id: u8,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub supports_thinking: bool,
+}
+
+impl ApiProfile {
+    fn deepseek(api_key: Option<String>) -> Self {
+        Self {
+            id: DEEPSEEK_PROFILE,
+            name: "DeepSeek".to_string(),
+            base_url: "https://api.deepseek.com".to_string(),
+            model: "deepseek-v4-flash".to_string(),
+            api_key,
+            supports_thinking: true,
+        }
+    }
+
+    fn custom(config: CustomApiConfig) -> Self {
+        Self {
+            id: CUSTOM_PROFILE,
+            name: "Custom OpenAI-compatible API".to_string(),
+            base_url: config.base_url,
+            model: config.model,
+            api_key: Some(config.api_key),
+            supports_thinking: false,
+        }
+    }
+
+    /// Summary generation uses the active provider credentials but always targets
+    /// the configured DeepSeek Flash model, independent of interactive chat.
+    fn summary(config: CustomApiConfig) -> Self {
+        Self {
+            id: CUSTOM_PROFILE,
+            name: "Custom OpenAI-compatible API".to_string(),
+            base_url: config.base_url,
+            model: "deepseek/deepseek-v4.1-flash".to_string(),
+            api_key: Some(config.api_key),
+            supports_thinking: false,
+        }
+    }
+}
+
 pub fn get_cache_dir() -> PathBuf {
     if let Ok(appdata) = std::env::var("APPDATA") {
         PathBuf::from(appdata).join("ArxivCat")
@@ -28,6 +85,10 @@ pub struct Config {
     pub chat_model: Option<String>,
     #[serde(rename = "workspace_path")]
     pub workspace_path: Option<String>,
+    #[serde(rename = "api_profile")]
+    pub api_profile: Option<u8>,
+    #[serde(rename = "custom_api")]
+    pub custom_api: Option<CustomApiConfig>,
 }
 
 impl Config {
@@ -61,13 +122,46 @@ impl Config {
         Ok(())
     }
 
-    pub fn resolve_api_key(&self) -> Option<String> {
-        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-            if !key.is_empty() {
-                return Some(key);
+    pub fn active_api_profile(&self) -> Result<ApiProfile> {
+        match self.api_profile.unwrap_or(DEEPSEEK_PROFILE) {
+            DEEPSEEK_PROFILE => {
+                let api_key = std::env::var("DEEPSEEK_API_KEY")
+                    .ok()
+                    .filter(|key| !key.is_empty())
+                    .or_else(|| self.deepseek_api_key.clone());
+                Ok(ApiProfile::deepseek(api_key))
             }
+            CUSTOM_PROFILE => self
+                .custom_api
+                .clone()
+                .map(ApiProfile::custom)
+                .ok_or_else(|| {
+                    crate::error::ArxivError::Config(
+                        "custom API is not configured; run `arxivcat token set --profile 2`".into(),
+                    )
+                }),
+            profile => Err(crate::error::ArxivError::Config(format!(
+                "unknown API profile: {profile}"
+            ))),
         }
-        self.deepseek_api_key.clone()
+    }
+
+    pub fn active_summary_api_profile(&self) -> Result<ApiProfile> {
+        match self.api_profile.unwrap_or(DEEPSEEK_PROFILE) {
+            DEEPSEEK_PROFILE => self.active_api_profile(),
+            CUSTOM_PROFILE => self
+                .custom_api
+                .clone()
+                .map(ApiProfile::summary)
+                .ok_or_else(|| {
+                    crate::error::ArxivError::Config(
+                        "custom API is not configured; run `arxivcat token set --profile 2`".into(),
+                    )
+                }),
+            profile => Err(crate::error::ArxivError::Config(format!(
+                "unknown API profile: {profile}"
+            ))),
+        }
     }
 }
 
@@ -77,6 +171,8 @@ impl Default for Config {
             deepseek_api_key: None,
             chat_model: Some("Flash".to_string()),
             workspace_path: None,
+            api_profile: Some(DEEPSEEK_PROFILE),
+            custom_api: None,
         }
     }
 }
@@ -95,6 +191,81 @@ pub fn save_token(token: &str) -> Result<()> {
     let mut config = load_or_backup_corrupt();
     config.deepseek_api_key = Some(token.to_string());
     config.save()
+}
+
+pub fn save_custom_api(base_url: &str, model: &str, api_key: &str) -> Result<()> {
+    let custom_api = validate_custom_api(base_url, model, api_key)?;
+    let mut config = load_or_backup_corrupt();
+    config.custom_api = Some(custom_api);
+    config.save()
+}
+
+pub fn validate_custom_api(base_url: &str, model: &str, api_key: &str) -> Result<CustomApiConfig> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    let model = model.trim().to_string();
+    let api_key = api_key.trim().to_string();
+    let url = reqwest::Url::parse(&base_url).map_err(|_| {
+        crate::error::ArxivError::Config("custom API base URL must be a valid HTTP(S) URL".into())
+    })?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(crate::error::ArxivError::Config(
+            "custom API base URL must be an HTTP(S) URL without credentials, query, or fragment"
+                .into(),
+        ));
+    }
+    if model.is_empty() || model.chars().any(char::is_control) {
+        return Err(crate::error::ArxivError::Config(
+            "custom API model cannot be empty or contain control characters".into(),
+        ));
+    }
+    if api_key.is_empty() || api_key.chars().any(char::is_control) {
+        return Err(crate::error::ArxivError::Config(
+            "custom API token cannot be empty or contain control characters".into(),
+        ));
+    }
+    Ok(CustomApiConfig {
+        base_url,
+        model,
+        api_key,
+    })
+}
+
+pub fn use_api_profile(profile: u8) -> Result<()> {
+    let mut config = load_or_backup_corrupt();
+    match profile {
+        DEEPSEEK_PROFILE => {}
+        CUSTOM_PROFILE if config.custom_api.is_none() => {
+            return Err(crate::error::ArxivError::Config(
+                "custom API is not configured; run `arxivcat token set --profile 2`".into(),
+            ));
+        }
+        CUSTOM_PROFILE => {}
+        _ => {
+            return Err(crate::error::ArxivError::Config(format!(
+                "unknown API profile: {profile}"
+            )))
+        }
+    }
+    config.api_profile = Some(profile);
+    config.save()
+}
+
+pub fn load_active_api_profile() -> Result<ApiProfile> {
+    load_or_backup_corrupt().active_api_profile()
+}
+
+pub fn load_active_summary_api_profile() -> Result<ApiProfile> {
+    load_or_backup_corrupt().active_summary_api_profile()
+}
+
+pub fn load_config() -> Config {
+    load_or_backup_corrupt()
 }
 
 /// Load the config; if the file exists but fails to parse, back it up as
@@ -124,7 +295,10 @@ fn load_or_backup_corrupt() -> Config {
 }
 
 pub fn load_cached_token() -> Option<String> {
-    load_or_backup_corrupt().resolve_api_key()
+    load_or_backup_corrupt()
+        .active_api_profile()
+        .ok()
+        .and_then(|profile| profile.api_key)
 }
 
 pub fn save_model_preference(model: &str) -> Result<()> {
@@ -160,6 +334,7 @@ mod tests {
         assert_eq!(config.deepseek_api_key, None);
         assert_eq!(config.workspace_path, None);
         assert_eq!(config.chat_model, None);
+        assert_eq!(config.active_api_profile().unwrap().id, DEEPSEEK_PROFILE);
     }
 
     #[test]
@@ -188,6 +363,8 @@ mod tests {
             deepseek_api_key: Some("sk-test".into()),
             chat_model: Some("Flash".into()),
             workspace_path: Some("/tmp/ws".into()),
+            api_profile: Some(DEEPSEEK_PROFILE),
+            custom_api: None,
         };
         cfg.save().unwrap();
 
@@ -209,6 +386,37 @@ mod tests {
         let loaded = Config::load().unwrap();
         assert_eq!(loaded.deepseek_api_key.as_deref(), Some("sk-test"));
         assert_eq!(loaded.workspace_path.as_deref(), Some("/tmp/ws"));
+    }
+
+    #[test]
+    fn custom_profile_uses_saved_endpoint_model_and_token() {
+        let config: Config =
+            serde_json::from_str(r#"{"api_profile":2,"custom_api":{"base_url":"https://api.example.test/v1/","model":"test-model","api_key":"test-token"}}"#).unwrap();
+        let profile = config.active_api_profile().unwrap();
+        assert_eq!(profile.name, "Custom OpenAI-compatible API");
+        assert_eq!(profile.base_url, "https://api.example.test/v1/");
+        assert_eq!(profile.model, "test-model");
+        assert_eq!(profile.api_key.as_deref(), Some("test-token"));
+    }
+
+    #[test]
+    fn summary_profile_pins_deepseek_flash_without_changing_chat_profile() {
+        let config: Config = serde_json::from_str(r#"{"api_profile":2,"custom_api":{"base_url":"https://api.example.test/v1","model":"gpt-5.6-terra","api_key":"test-token"}}"#).unwrap();
+        assert_eq!(config.active_api_profile().unwrap().model, "gpt-5.6-terra");
+        assert_eq!(
+            config.active_summary_api_profile().unwrap().model,
+            "deepseek/deepseek-v4.1-flash"
+        );
+    }
+
+    #[test]
+    fn custom_api_validation_normalizes_and_rejects_invalid_values() {
+        let custom = validate_custom_api("https://api.example.test/v1/", "model", "token").unwrap();
+        assert_eq!(custom.base_url, "https://api.example.test/v1");
+        assert!(validate_custom_api("ftp://api.example.test", "model", "token").is_err());
+        assert!(validate_custom_api("https://api.example.test?x=1", "model", "token").is_err());
+        assert!(validate_custom_api("https://api.example.test", "", "token").is_err());
+        assert!(validate_custom_api("https://api.example.test", "model", "").is_err());
     }
     #[test]
     fn corrupted_config_is_backed_up_not_overwritten() {
